@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ErgoVision — Workplace Ergonomics Platform</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="/static/app.css" />
+</head>
+<body>
+
+<canvas id="bg" aria-hidden="true"></canvas>
+
+<aside id="sidebar">
+  <a class="brand" href="#/">
+    <span class="brand-icon"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></span>
+    <span class="brand-text">Ergo<em>Vision</em></span>
+  </a>
+
+  <nav id="nav">
+    <div class="nav-group">Overview</div>
+    <a href="#/" data-route="dashboard"><i class="ic">▦</i><span>Dashboard</span></a>
+    <a href="#/register" data-route="register"><i class="ic">≡</i><span>Risk register</span></a>
+    <a href="#/actions" data-route="actions"><i class="ic">✓</i><span>Actions</span><b class="badge" id="nav-actions"></b></a>
+
+    <div class="nav-group">Assess</div>
+    <a href="#/new" data-route="new"><i class="ic">＋</i><span>New assessment</span></a>
+    <a href="#/lab" data-route="lab"><i class="ic">⬡</i><span>Posture lab · 3D</span></a>
+    <a href="#/tools" data-route="tools"><i class="ic">⚙</i><span>All methods</span></a>
+
+    <div class="nav-group">Manage</div>
+    <a href="#/workstations" data-route="workstations"><i class="ic">⌂</i><span>Workstations</span></a>
+    <a href="#/method" data-route="method"><i class="ic">⇶</i><span>Method &amp; flowchart</span></a>
+  </nav>
+
+  <div class="side-foot">
+    <div class="status"><span class="led" id="led"></span><span id="status-text">connecting…</span></div>
+    <div class="side-note">Industrial ergonomics platform · v0.3</div>
+  </div>
+</aside>
+
+<header id="topbar">
+  <button class="burger" id="burger" aria-label="Menu">☰</button>
+  <div class="crumbs" id="crumbs">Dashboard</div>
+  <div class="top-actions">
+    <div class="search" id="search-wrap"><span>⌕</span><input id="search" placeholder="Jump to a tool or workstation…" /></div>
+    <button class="btn primary" id="new-assessment">＋ New assessment</button>
+  </div>
+</header>
+
+<main id="view"></main>
+
+<div id="toast" class="toast"></div>
+<div id="modal" class="modal" hidden><div class="modal-card glass" id="modal-card"></div></div>
+<input type="file" id="file" hidden />
+
+<script type="module" src="/static/app.js"></script>
+</body>
+</html>

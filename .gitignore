@@ -1,0 +1,16 @@
+# pose model weights (9 MB, fetched by download_model.py)
+models/
+
+# local database of assessments
+ergovision.db
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# scratch output
+ergovision_*.png
+test_figure.png
+*.bak

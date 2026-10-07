@@ -1,0 +1,1203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ErgoVision — Digital Twin Ergonomic Assessment</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #070910;
+      --fg: #eef0f5;
+      --fg2: #8a90a3;
+      --fg3: #555c70;
+      --primary: #4f8cff;
+      --primary-dim: rgba(79,140,255,0.16);
+      --cyan: #3ee6d2;
+      --red: #ff6b6b;
+      --amber: #ffc53d;
+      --green: #4ade80;
+      --red-dim: rgba(255,107,107,0.12);
+      --amber-dim: rgba(255,197,61,0.12);
+      --green-dim: rgba(74,222,128,0.12);
+      --border: rgba(255,255,255,0.08);
+      --glass: rgba(10,13,22,0.62);
+      --glass2: rgba(255,255,255,0.04);
+      --radius: 18px;
+      --radius-sm: 11px;
+      --mono: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+    }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg); color: var(--fg);
+      overflow-x: hidden; -webkit-font-smoothing: antialiased;
+    }
+    a { color: inherit; text-decoration: none; }
+    code { font-family: var(--mono); font-size: 0.92em; background: rgba(255,255,255,0.06); padding: 1px 6px; border-radius: 6px; }
+
+    /* ── 3D stage (fixed behind everything) ─────────────────────────────── */
+    #stage { position: fixed; inset: 0; z-index: 0; }
+    #stage canvas { display: block; }
+    #labels { position: fixed; inset: 0; z-index: 1; pointer-events: none; }
+    .jl {
+      font-family: var(--mono); font-size: 11px; letter-spacing: 0.02em;
+      color: #dfe3ee; background: rgba(8,10,18,0.72); border: 1px solid var(--border);
+      padding: 3px 8px; border-radius: 999px; white-space: nowrap;
+      backdrop-filter: blur(6px); transform: translate(14px, -50%);
+      transition: opacity .4s ease; box-shadow: 0 2px 12px rgba(0,0,0,0.4);
+    }
+    .jl b { font-weight: 600; }
+    .jl.dim { opacity: 0.35; }
+    .jl.left { transform: translate(calc(-100% - 14px), -50%); }
+    .jl .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; margin-right: 6px; vertical-align: 0; }
+
+    /* ── HUD layer ─────────────────────────────────────────────────────── */
+    #hud { position: relative; z-index: 2; min-height: 100vh; pointer-events: none; }
+    #hud > * { pointer-events: auto; }
+    .glass {
+      background: var(--glass); border: 1px solid var(--border); border-radius: var(--radius);
+      backdrop-filter: blur(14px) saturate(140%); box-shadow: 0 10px 40px rgba(0,0,0,0.35);
+    }
+    .topbar {
+      position: fixed; top: 0; left: 0; right: 0; z-index: 5;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 22px; pointer-events: none;
+    }
+    .topbar > * { pointer-events: auto; }
+    .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; letter-spacing: -0.01em; }
+    .brand-icon { width: 30px; height: 30px; border-radius: 9px; background: var(--primary-dim); border: 1px solid rgba(79,140,255,0.35); display: grid; place-items: center; }
+    .brand-icon svg { width: 16px; height: 16px; stroke: var(--primary); fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+    .brand span { color: var(--primary); }
+    .topnav { display: flex; gap: 6px; align-items: center; padding: 6px; }
+    .topnav a { font-size: 12.5px; color: var(--fg2); padding: 7px 12px; border-radius: 999px; transition: .2s; }
+    .topnav a:hover { color: var(--fg); background: var(--glass2); }
+    .status { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: var(--fg2); padding: 8px 12px; font-family: var(--mono); }
+    .status .led { width: 8px; height: 8px; border-radius: 50%; background: var(--fg3); box-shadow: 0 0 0 0 transparent; }
+    .status .led.ok { background: var(--green); box-shadow: 0 0 10px var(--green); }
+    .status .led.warn { background: var(--amber); box-shadow: 0 0 10px var(--amber); }
+    .status .led.err { background: var(--red); box-shadow: 0 0 10px var(--red); }
+
+    .hero { position: relative; height: 100vh; }
+    .panel-left {
+      position: absolute; left: 22px; top: 84px; width: 330px; padding: 20px;
+      display: flex; flex-direction: column; gap: 14px;
+    }
+    .panel-right {
+      position: absolute; right: 22px; top: 84px; width: 320px; padding: 20px;
+      display: flex; flex-direction: column; gap: 14px;
+    }
+    .eyebrow { font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--primary); font-weight: 600; }
+    .title { font-size: 30px; font-weight: 800; line-height: 1.05; letter-spacing: -0.02em; }
+    .title em { font-style: normal; color: var(--primary); }
+    .lead { font-size: 13px; color: var(--fg2); line-height: 1.6; }
+    .btns { display: flex; flex-wrap: wrap; gap: 8px; }
+    .btn {
+      display: inline-flex; align-items: center; gap: 8px; padding: 10px 14px;
+      border-radius: 999px; border: 1px solid var(--border); background: var(--glass2);
+      color: var(--fg); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; transition: .2s;
+    }
+    .btn:hover { background: rgba(255,255,255,0.08); transform: translateY(-1px); }
+    .btn.primary { background: var(--primary); border-color: transparent; color: #fff; box-shadow: 0 6px 24px rgba(79,140,255,0.35); }
+    .btn.primary:hover { background: #6199ff; }
+    .btn svg { width: 15px; height: 15px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .drop-hint { font-size: 11.5px; color: var(--fg3); }
+    .chip {
+      display: none; align-items: center; gap: 10px; padding: 10px 12px; border-radius: var(--radius-sm);
+      background: var(--glass2); border: 1px solid var(--border); font-size: 12.5px;
+    }
+    .chip.on { display: flex; }
+    .chip .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+    .chip .sub { font-size: 11px; color: var(--fg2); }
+    .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--cyan); box-shadow: 0 0 0 0 rgba(62,230,210,0.6); animation: pulse 1.6s infinite; }
+    @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(62,230,210,0.6); } 100% { box-shadow: 0 0 0 10px rgba(62,230,210,0); } }
+    .spinner { width: 14px; height: 14px; border: 2px solid rgba(255,255,255,0.18); border-top-color: var(--primary); border-radius: 50%; animation: spin .8s linear infinite; display: inline-block; vertical-align: -2px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .note { font-size: 12px; line-height: 1.55; padding: 10px 12px; border-radius: var(--radius-sm); border: 1px solid; }
+    .note.warn { color: #ffe08a; background: var(--amber-dim); border-color: rgba(255,197,61,0.3); }
+    .note.err { color: #ffb3b3; background: var(--red-dim); border-color: rgba(255,107,107,0.35); }
+    .note.info { color: #cfd6e6; background: var(--glass2); border-color: var(--border); }
+    .kv { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-size: 12px; color: var(--fg2); }
+    .kv b { color: var(--fg); font-weight: 500; font-family: var(--mono); font-size: 11.5px; }
+
+    .score-block { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .score { padding: 14px; border-radius: var(--radius-sm); background: var(--glass2); border: 1px solid var(--border); position: relative; overflow: hidden; }
+    .score::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: var(--c, var(--fg3)); opacity: .8; }
+    .score .cap { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--fg2); }
+    .score .big { font-size: 38px; font-weight: 800; line-height: 1.05; letter-spacing: -0.03em; color: var(--c, var(--fg)); font-variant-numeric: tabular-nums; margin-top: 4px; }
+    .score .big small { font-size: 13px; color: var(--fg3); font-weight: 600; letter-spacing: 0; }
+    .score .pill { display: inline-block; margin-top: 8px; font-size: 10.5px; font-weight: 600; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--c, var(--border)); color: var(--c, var(--fg2)); }
+    .score .act { font-size: 11px; color: var(--fg2); margin-top: 8px; line-height: 1.45; }
+    .heat { display: flex; flex-direction: column; gap: 7px; }
+    .heat-row { display: grid; grid-template-columns: 82px 1fr 24px; align-items: center; gap: 10px; font-size: 11.5px; color: var(--fg2); }
+    .heat-row .bar { height: 6px; border-radius: 999px; background: rgba(255,255,255,0.06); overflow: hidden; }
+    .heat-row .bar i { display: block; height: 100%; width: 0; border-radius: 999px; transition: width .9s cubic-bezier(.2,.8,.2,1), background .4s; }
+    .heat-row .n { font-family: var(--mono); font-size: 11px; color: var(--fg); text-align: right; }
+    .legend { display: flex; gap: 12px; font-size: 10.5px; color: var(--fg3); letter-spacing: .06em; text-transform: uppercase; }
+    .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 5px; vertical-align: 0; }
+    .demo-tag { font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--amber); border: 1px solid rgba(255,197,61,0.35); background: var(--amber-dim); padding: 3px 8px; border-radius: 999px; font-weight: 600; }
+    .bottom-hint {
+      position: absolute; left: 50%; bottom: 26px; transform: translateX(-50%);
+      display: flex; gap: 8px; align-items: center; padding: 8px 14px; font-size: 11.5px; color: var(--fg2);
+      font-family: var(--mono); white-space: nowrap;
+    }
+    .bottom-hint kbd { font: inherit; color: var(--fg); background: rgba(255,255,255,0.07); padding: 1px 6px; border-radius: 6px; border: 1px solid var(--border); }
+    .demo-strip { position: absolute; left: 50%; top: 84px; transform: translateX(-50%); display: flex; gap: 6px; padding: 6px; }
+    .demo-strip button { font: inherit; font-size: 11.5px; color: var(--fg2); background: transparent; border: 1px solid transparent; border-radius: 999px; padding: 6px 11px; cursor: pointer; transition: .2s; }
+    .demo-strip button:hover { color: var(--fg); background: var(--glass2); }
+    .demo-strip button.on { color: var(--fg); background: var(--primary-dim); border-color: rgba(79,140,255,0.35); }
+    .frame-card { position: absolute; left: 22px; bottom: 26px; width: 240px; padding: 10px; display: none; }
+    .frame-card.on { display: block; }
+    .frame-card img { width: 100%; border-radius: 8px; display: block; }
+    .frame-card .cap { font-size: 10.5px; color: var(--fg2); margin-top: 8px; letter-spacing: .08em; text-transform: uppercase; }
+    .toast { position: fixed; left: 50%; bottom: 70px; transform: translate(-50%, 20px); z-index: 9; padding: 10px 16px; font-size: 12.5px; opacity: 0; transition: .25s; pointer-events: none; }
+    .toast.on { opacity: 1; transform: translate(-50%, 0); }
+
+    /* ── sections below the fold ───────────────────────────────────────── */
+    .section { position: relative; z-index: 2; padding: 90px 22px; }
+    .container { max-width: 1180px; margin: 0 auto; }
+    .sheet { padding: 28px; }
+    .sec-head { margin-bottom: 26px; }
+    .sec-head h2 { font-size: 30px; font-weight: 800; letter-spacing: -0.02em; margin-top: 6px; }
+    .sec-head p { color: var(--fg2); font-size: 14px; margin-top: 8px; max-width: 720px; line-height: 1.6; }
+    .grid2 { display: grid; grid-template-columns: 1.05fr 1fr; gap: 20px; align-items: start; }
+    .card { padding: 20px; border-radius: var(--radius); background: var(--glass2); border: 1px solid var(--border); }
+    .card-h { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
+    .card-t { font-size: 13.5px; font-weight: 700; }
+    .band { font-size: 11px; color: var(--fg2); }
+    table.tbl { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+    table.tbl th { text-align: left; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--fg2); padding: 8px 10px; border-bottom: 1px solid var(--border); font-weight: 600; }
+    table.tbl td { padding: 8px 10px; border-bottom: 1px solid rgba(255,255,255,0.04); vertical-align: top; }
+    table.tbl td.num { font-family: var(--mono); font-size: 11.5px; text-align: right; white-space: nowrap; }
+    table.tbl tr:last-child td { border-bottom: none; }
+    .math { font-family: var(--mono); font-size: 11.5px; color: var(--fg2); line-height: 1.9; margin-top: 12px; }
+    .math b { color: var(--fg); }
+    .mods { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px 18px; }
+    .mod { display: flex; align-items: center; gap: 9px; font-size: 12.5px; color: #d6d8de; cursor: pointer; }
+    .mod input[type=checkbox] { width: 15px; height: 15px; accent-color: var(--primary); flex: none; }
+    .mod-num { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12.5px; }
+    .mod-num input, .mod-num select { background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--fg); border-radius: 8px; padding: 5px 8px; font: inherit; font-size: 12.5px; width: 92px; }
+    .mod-num select { width: 140px; }
+    .finding { padding: 14px 16px; border-radius: var(--radius-sm); border: 1px solid var(--border); background: var(--glass2); margin-bottom: 10px; transition: box-shadow .3s, border-color .3s; }
+    .finding.flash { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(79,140,255,0.25); }
+    .f-head { display: flex; align-items: center; gap: 10px; justify-content: space-between; }
+    .f-title { font-weight: 700; font-size: 13.5px; }
+    .f-body { font-size: 12.5px; color: #c3c6cf; margin-top: 6px; line-height: 1.6; }
+    .f-why { font-size: 12px; color: var(--fg2); margin-top: 6px; line-height: 1.6; }
+    .finding ul { margin: 8px 0 0 16px; font-size: 12.5px; line-height: 1.7; color: #d6d8de; }
+    .ref { font-size: 10.5px; color: var(--fg3); margin-top: 8px; font-family: var(--mono); }
+    .pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 10.5px; font-weight: 600; border: 1px solid; }
+    .warn-list .note { margin-bottom: 8px; }
+    .how { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+    .how .card { min-height: 170px; }
+    .how .n { font-family: var(--mono); color: var(--primary); font-size: 12px; margin-bottom: 8px; }
+    .how h4 { font-size: 15px; margin-bottom: 8px; }
+    .how p { font-size: 12.5px; color: var(--fg2); line-height: 1.6; }
+    .spark { width: 100%; height: 70px; display: block; }
+    footer { position: relative; z-index: 2; padding: 30px 22px 40px; color: var(--fg3); font-size: 12px; text-align: center; }
+
+    @media (max-width: 1280px) {
+      /* side panels leave no room in the middle: park the pose strip above the hint */
+      .demo-strip { top: auto; bottom: 68px; max-width: calc(100% - 44px); flex-wrap: wrap; justify-content: center; }
+      .panel-left, .panel-right { width: 290px; padding: 16px; }
+      .title { font-size: 26px; }
+      .bottom-hint { display: none; }
+      .frame-card { bottom: 120px; }
+    }
+    @media (max-width: 1100px) {
+      .how { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 900px) {
+      .panel-left, .panel-right { position: static; width: auto; margin: 0 16px; }
+      .panel-left { margin-top: 74px; }
+      .hero { height: auto; padding-bottom: 60px; }
+      .demo-strip { position: static; transform: none; margin: 12px 16px 0; flex-wrap: wrap; }
+      .bottom-hint, .frame-card { display: none !important; }
+      .grid2 { grid-template-columns: 1fr; }
+      .topnav { display: none; }
+      #labels .jl { font-size: 10px; }
+    }
+  </style>
+</head>
+<body>
+
+<div id="stage"></div>
+<div id="labels"></div>
+
+<div class="topbar">
+  <a href="#top" class="brand">
+    <div class="brand-icon"><svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg></div>
+    ErgoVision&nbsp;<span>AI</span>
+  </a>
+  <nav class="topnav glass">
+    <a href="#top">Twin</a>
+    <a href="#report">Report</a>
+    <a href="#how">How it works</a>
+  </nav>
+  <div class="status glass" id="status"><span class="led"></span><span id="status-text">connecting…</span></div>
+</div>
+
+<div id="hud">
+  <section class="hero" id="top">
+
+    <div class="demo-strip glass" id="demo-strip"></div>
+
+    <div class="panel-left glass">
+      <div class="eyebrow">Digital twin assessment</div>
+      <div class="title">Pose it. <em>Score it.</em><br/>Fix the workstation.</div>
+      <div class="lead">Upload a side-on photo of a worker. The twin takes their exact joint angles, every segment lights up by its RULA / REBA band, and the fixes are ranked underneath.</div>
+      <div class="btns">
+        <button class="btn primary" onclick="triggerUpload('image')">
+          <svg viewBox="0 0 24 24"><polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/></svg>
+          Upload photo
+        </button>
+        <button class="btn" onclick="triggerUpload('video')">
+          <svg viewBox="0 0 24 24"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+          Video clip
+        </button>
+        <button class="btn" onclick="startCamera()">
+          <svg viewBox="0 0 24 24"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+          Live
+        </button>
+      </div>
+      <div class="drop-hint">…or drop a file anywhere on the page.</div>
+      <input type="file" id="imageInput" hidden />
+      <div class="chip" id="chip">
+        <div class="pulse"></div>
+        <div style="flex:1;min-width:0;"><div class="name" id="chip-name">file.jpg</div><div class="sub" id="chip-sub">Ready</div></div>
+      </div>
+      <div id="left-status"></div>
+      <div class="kv" id="view-kv"></div>
+      <div class="warn-list" id="warnings"></div>
+    </div>
+
+    <div class="panel-right glass">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <div class="eyebrow">Scores</div>
+        <span class="demo-tag" id="demo-tag">demo pose</span>
+      </div>
+      <div class="score-block">
+        <div class="score" id="rula-card">
+          <div class="cap">RULA</div>
+          <div class="big"><span id="rula-n">–</span><small> / 7</small></div>
+          <div class="pill" id="rula-pill">–</div>
+          <div class="act" id="rula-act"></div>
+        </div>
+        <div class="score" id="reba-card">
+          <div class="cap">REBA</div>
+          <div class="big"><span id="reba-n">–</span><small> / 15</small></div>
+          <div class="pill" id="reba-pill">–</div>
+          <div class="act" id="reba-act"></div>
+        </div>
+      </div>
+      <div class="eyebrow" style="margin-top:4px;">Worksheet rows · <span id="side-note" style="color:var(--fg2);font-weight:500;letter-spacing:0;text-transform:none;">worst side</span></div>
+      <div class="heat" id="heat"></div>
+      <div class="legend"><span><i style="background:var(--green)"></i>neutral</span><span><i style="background:var(--amber)"></i>elevated</span><span><i style="background:var(--red)"></i>worst band</span></div>
+      <a class="btn" href="#report" style="justify-content:center;">Open full report ↓</a>
+    </div>
+
+    <div class="frame-card glass" id="frame-card">
+      <img id="frame-img" alt="Analysed frame" />
+      <div class="cap" id="frame-cap">Source frame</div>
+    </div>
+
+    <div class="bottom-hint glass"><kbd>drag</kbd> orbit &nbsp;·&nbsp; <kbd>scroll</kbd> zoom &nbsp;·&nbsp; <kbd>click</kbd> a body part for its finding</div>
+  </section>
+
+  <section class="section" id="report">
+    <div class="container">
+      <div class="glass sheet">
+        <div class="sec-head">
+          <div class="eyebrow">Assessment</div>
+          <h2>RULA &amp; REBA report</h2>
+          <p id="report-sub">Scored from the measured joint angles with the published worksheets. Nothing is estimated from a formula — every number is a chart lookup you can check against a printed sheet.</p>
+        </div>
+
+        <div class="grid2">
+          <div style="display:flex;flex-direction:column;gap:20px;">
+            <div class="card">
+              <div class="card-h"><span class="card-t">Measured angles</span><span class="band" id="angle-side"></span></div>
+              <table class="tbl">
+                <thead><tr><th>Joint</th><th style="text-align:right;">Angle</th><th>Reference line</th></tr></thead>
+                <tbody id="angle-rows"></tbody>
+              </table>
+            </div>
+            <div class="card" id="timeline-card" style="display:none;">
+              <div class="card-h"><span class="card-t">Score over the clip</span><span class="band" id="timeline-note"></span></div>
+              <svg class="spark" id="spark" viewBox="0 0 600 70" preserveAspectRatio="none"></svg>
+            </div>
+            <div class="card" id="shot-card" style="display:none;">
+              <div class="card-h"><span class="card-t">Analysed frame</span><span class="band">skeleton overlay from the pose model</span></div>
+              <img id="shot" style="width:100%;border-radius:10px;display:block;" alt="Annotated posture" />
+            </div>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:20px;">
+            <div class="card">
+              <div class="card-h"><span class="card-t">Where the score came from</span><span class="band" id="side-info"></span></div>
+              <table class="tbl">
+                <thead><tr><th>Row</th><th style="text-align:right;">Angle</th><th>Band</th><th style="text-align:right;">RULA</th><th style="text-align:right;">REBA</th></tr></thead>
+                <tbody id="component-rows"></tbody>
+              </table>
+              <div class="math" id="table-math"></div>
+            </div>
+            <div class="card">
+              <div class="card-h"><span class="card-t">Task details the camera cannot see</span><span class="band">rescoring is instant</span></div>
+              <div class="mods" id="mods"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:20px;">
+          <div class="card-h"><span class="card-t">What to change, in priority order</span><span class="band" id="finding-count"></span></div>
+          <div id="findings"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="section" id="how" style="padding-top:0;">
+    <div class="container">
+      <div class="glass sheet">
+        <div class="sec-head">
+          <div class="eyebrow">Pipeline</div>
+          <h2>How a photo becomes a score</h2>
+        </div>
+        <div class="how">
+          <div class="card"><div class="n">01</div><h4>Pose landmarks</h4><p>MediaPipe finds 33 body points in the image and in metric 3D. Pixel coordinates are rescaled by width and height so the aspect ratio cannot skew an angle.</p></div>
+          <div class="card"><div class="n">02</div><h4>Worksheet angles</h4><p>Trunk vs gravity; neck and upper arm vs the <em>trunk axis</em>; elbow and knee as flexion from straight. Signs are kept, so extension never masquerades as flexion.</p></div>
+          <div class="card"><div class="n">03</div><h4>Chart lookups</h4><p>Each angle lands in its band, adjustments are added, then Table A, B and C of RULA and REBA are read exactly as printed. Load, grip and repetition come from you.</p></div>
+          <div class="card"><div class="n">04</div><h4>Ranked fixes</h4><p>Every finding is tied to the angle and worksheet row that produced it, and sorted by the component score — the biggest number is the cheapest place to start.</p></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <footer>ErgoVision · RULA (McAtamney &amp; Corlett, 1993) · REBA (Hignett &amp; McAtamney, 2000) · screening tools, not diagnoses.</footer>
+</div>
+
+<div class="toast glass" id="toast"></div>
+
+<script type="module">
+/* ══════════════════════════════════════════════════════════════════════════
+   ErgoVision front end
+   1. a Three.js digital twin posed by the measured angles
+   2. upload -> /analyze, task details -> /score (no re-upload)
+   3. report, worksheet maths, ranked findings
+   ══════════════════════════════════════════════════════════════════════════ */
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { CSS2DRenderer, CSS2DObject } from 'three/addons/renderers/CSS2DRenderer.js';
+
+const API = (location.protocol === 'file:' ? 'http://127.0.0.1:5000' : '');
+const rad = THREE.MathUtils.degToRad;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const num = v => (v === null || v === undefined || isNaN(v)) ? 0 : Number(v);
+
+const state = {
+  angles: null, flags: null, result: null,
+  modifiers: {},
+  demo: true, demoIndex: 0, demoTimer: null,
+};
+
+/* ─────────────────────────────────────────────────────────────────────────
+   3D scene
+   ───────────────────────────────────────────────────────────────────────── */
+const stage = document.getElementById('stage');
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.1;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+stage.appendChild(renderer.domElement);
+
+const labelRenderer = new CSS2DRenderer({ element: document.getElementById('labels') });
+labelRenderer.setSize(window.innerWidth, window.innerHeight);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x070910);
+scene.fog = new THREE.Fog(0x070910, 6, 14);
+
+const camera = new THREE.PerspectiveCamera(38, window.innerWidth / window.innerHeight, 0.1, 60);
+camera.position.set(1.1, 1.55, 3.6);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 0.98, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.06;
+controls.enablePan = false;
+controls.minDistance = 1.8;
+controls.maxDistance = 6.5;
+controls.maxPolarAngle = Math.PI * 0.55;
+controls.autoRotate = true;
+controls.autoRotateSpeed = 0.55;
+let idleTimer = null;
+controls.addEventListener('start', () => { controls.autoRotate = false; clearTimeout(idleTimer); });
+controls.addEventListener('end', () => { idleTimer = setTimeout(() => { controls.autoRotate = true; }, 9000); });
+
+/* lights */
+scene.add(new THREE.HemisphereLight(0x8fb4ff, 0x0a0c14, 0.55));
+const key = new THREE.DirectionalLight(0xffffff, 1.6);
+key.position.set(2.5, 4.5, 3);
+key.castShadow = true;
+key.shadow.mapSize.set(2048, 2048);
+key.shadow.camera.left = -3; key.shadow.camera.right = 3;
+key.shadow.camera.top = 4; key.shadow.camera.bottom = -1;
+key.shadow.radius = 4;
+scene.add(key);
+const rim = new THREE.PointLight(0x4f8cff, 6, 9, 1.6);
+rim.position.set(-2.4, 1.8, -1.6);
+scene.add(rim);
+const riskLight = new THREE.PointLight(0x4ade80, 0, 7, 1.8);   // tinted by the REBA band
+riskLight.position.set(1.6, 0.4, 1.8);
+scene.add(riskLight);
+
+/* floor: soft disc + grid that fades into the fog */
+const floor = new THREE.Mesh(
+  new THREE.CircleGeometry(4.5, 96),
+  new THREE.MeshStandardMaterial({ color: 0x0b0e17, roughness: 0.95, metalness: 0.05 })
+);
+floor.rotation.x = -Math.PI / 2;
+floor.receiveShadow = true;
+scene.add(floor);
+const grid = new THREE.GridHelper(12, 48, 0x1c2438, 0x131827);
+grid.material.transparent = true;
+grid.material.opacity = 0.55;
+grid.position.y = 0.002;
+scene.add(grid);
+const ring = new THREE.Mesh(
+  new THREE.RingGeometry(0.62, 0.66, 96),
+  new THREE.MeshBasicMaterial({ color: 0x4f8cff, transparent: true, opacity: 0.35, side: THREE.DoubleSide })
+);
+ring.rotation.x = -Math.PI / 2;
+ring.position.y = 0.004;
+scene.add(ring);
+
+/* drifting particle field */
+const P = 700;
+const pPos = new Float32Array(P * 3);
+for (let i = 0; i < P; i++) {
+  pPos[i * 3] = (Math.random() - 0.5) * 9;
+  pPos[i * 3 + 1] = Math.random() * 3.2;
+  pPos[i * 3 + 2] = (Math.random() - 0.5) * 9;
+}
+const particles = new THREE.Points(
+  new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(pPos, 3)),
+  new THREE.PointsMaterial({ color: 0x6f9cff, size: 0.018, transparent: true, opacity: 0.55, depthWrite: false })
+);
+scene.add(particles);
+
+/* ── the mannequin ──────────────────────────────────────────────────────── */
+// Faces +X, up is +Y, its left side is +Z. Segment lengths in metres.
+const DIM = {
+  hip: 0.96, trunk: 0.50, shoulderW: 0.19, hipW: 0.10, neck: 0.09, head: 0.115,
+  upper: 0.30, fore: 0.26, hand: 0.10, thigh: 0.45, shank: 0.43, foot: 0.22,
+};
+const COLOURS = { neutral: new THREE.Color(0x3f4b66), ghost: 0x4f8cff };
+
+function heatColour(t) {
+  // 0 -> green, 0.5 -> amber, 1 -> red
+  const g = new THREE.Color(0x4ade80), a = new THREE.Color(0xffc53d), r = new THREE.Color(0xff6b6b);
+  return t < 0.5 ? g.clone().lerp(a, t * 2) : a.clone().lerp(r, (t - 0.5) * 2);
+}
+
+function segmentMaterial(ghost) {
+  if (ghost) return new THREE.MeshBasicMaterial({ color: COLOURS.ghost, wireframe: true, transparent: true, opacity: 0.10, depthWrite: false });
+  return new THREE.MeshStandardMaterial({ color: COLOURS.neutral, roughness: 0.42, metalness: 0.25, emissive: COLOURS.neutral, emissiveIntensity: 0.18 });
+}
+
+class Mannequin {
+  constructor(ghost = false) {
+    this.ghost = ghost;
+    this.root = new THREE.Group();
+    this.root.position.y = DIM.hip;
+    this.nodes = {};      // joint pivots
+    this.meshes = {};     // segment meshes, keyed by segment for colouring
+    this.targets = {};    // target quaternions per joint
+    this.labels = {};
+    this.build();
+  }
+
+  capsule(len, r, seg, parent, dir = -1, cap = 8) {
+    const m = new THREE.Mesh(new THREE.CapsuleGeometry(r, Math.max(0.01, len - 2 * r), cap, 20), segmentMaterial(this.ghost));
+    m.position.y = dir * len / 2;
+    m.castShadow = m.receiveShadow = !this.ghost;
+    m.userData.segment = seg;
+    parent.add(m);
+    (this.meshes[seg] = this.meshes[seg] || []).push(m);
+    return m;
+  }
+
+  pivot(name, parent, x, y, z) {
+    const o = new THREE.Object3D();
+    o.position.set(x, y, z);
+    parent.add(o);
+    this.nodes[name] = o;
+    this.targets[name] = new THREE.Quaternion();
+    return o;
+  }
+
+  build() {
+    const D = DIM;
+    // pelvis block
+    const pelvis = new THREE.Mesh(new THREE.CapsuleGeometry(0.085, 0.16, 6, 16), segmentMaterial(this.ghost));
+    pelvis.rotation.x = Math.PI / 2; pelvis.position.y = 0.02;
+    pelvis.castShadow = !this.ghost; pelvis.userData.segment = 'trunk';
+    this.root.add(pelvis); this.meshes.trunk = [pelvis];
+
+    const chest = this.pivot('chest', this.root, 0, 0.04, 0);
+    this.capsule(D.trunk, 0.13, 'trunk', chest, +1);
+    // shoulder bar
+    const bar = new THREE.Mesh(new THREE.CapsuleGeometry(0.06, D.shoulderW * 2 - 0.12, 4, 14), segmentMaterial(this.ghost));
+    bar.rotation.x = Math.PI / 2; bar.position.y = D.trunk - 0.02; bar.userData.segment = 'trunk';
+    bar.castShadow = !this.ghost; chest.add(bar); this.meshes.trunk.push(bar);
+
+    const neck = this.pivot('neck', chest, 0, D.trunk + 0.02, 0);
+    this.capsule(D.neck + 0.04, 0.045, 'neck', neck, +1, 4);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(D.head, 28, 22), segmentMaterial(this.ghost));
+    head.position.y = D.neck + D.head + 0.01; head.castShadow = !this.ghost; head.userData.segment = 'neck';
+    neck.add(head); this.meshes.neck.push(head);
+    // a small nose so the facing direction is obvious
+    const nose = new THREE.Mesh(new THREE.ConeGeometry(0.022, 0.05, 10), segmentMaterial(this.ghost));
+    nose.rotation.z = -Math.PI / 2; nose.position.set(D.head + 0.01, D.neck + D.head, 0);
+    nose.userData.segment = 'neck'; neck.add(nose); this.meshes.neck.push(nose);
+
+    for (const [side, z] of [['left', +1], ['right', -1]]) {
+      const sh = this.pivot('shoulder_' + side, chest, 0, D.trunk - 0.02, z * D.shoulderW);
+      this.capsule(D.upper, 0.055, 'upper_arm_' + side, sh);
+      const el = this.pivot('elbow_' + side, sh, 0, -D.upper, 0);
+      this.capsule(D.fore, 0.047, 'lower_arm_' + side, el);
+      const wr = this.pivot('wrist_' + side, el, 0, -D.fore, 0);
+      const hand = new THREE.Mesh(new THREE.BoxGeometry(0.035, D.hand, 0.07, 1, 1, 1), segmentMaterial(this.ghost));
+      hand.position.y = -D.hand / 2; hand.castShadow = !this.ghost; hand.userData.segment = 'hand_' + side;
+      wr.add(hand); this.meshes['hand_' + side] = [hand];
+
+      const hip = this.pivot('hip_' + side, this.root, 0, 0, z * D.hipW);
+      this.capsule(D.thigh, 0.075, 'legs', hip);
+      const knee = this.pivot('knee_' + side, hip, 0, -D.thigh, 0);
+      this.capsule(D.shank, 0.058, 'legs', knee);
+      const ankle = this.pivot('ankle_' + side, knee, 0, -D.shank, 0);
+      const foot = new THREE.Mesh(new THREE.BoxGeometry(D.foot, 0.05, 0.085), segmentMaterial(this.ghost));
+      foot.position.set(D.foot / 2 - 0.05, -0.05, 0); foot.castShadow = !this.ghost; foot.userData.segment = 'legs';
+      ankle.add(foot); this.meshes.legs.push(foot);
+    }
+    scene.add(this.root);
+  }
+
+  /* label anchored to a joint, text updated per pose */
+  label(name, node, offsetY = 0, left = false) {
+    if (this.ghost) return;
+    const el = document.createElement('div');
+    el.className = 'jl' + (left ? ' left' : '');
+    const obj = new CSS2DObject(el);
+    obj.position.set(0, offsetY, 0);
+    node.add(obj);
+    this.labels[name] = el;
+  }
+
+  /* Convert worksheet angles into joint targets. Signs documented inline. */
+  setPose(a, side) {
+    const T = this.targets, e = new THREE.Euler();
+    const q = (x, y, z) => new THREE.Quaternion().setFromEuler(e.set(rad(x), rad(y), rad(z), 'YXZ'));
+    const trunk = num(a.trunk_flexion);
+    // trunk grows +Y from the hips: forward flexion (towards +X) is a negative roll about Z
+    T.chest.copy(q(-num(a.trunk_side_bend), num(a.trunk_twist), -trunk));
+    T.neck.copy(q(-num(a.neck_side_bend), num(a.neck_twist), -num(a.neck_flexion)));
+    for (const [s, z] of [['left', +1], ['right', -1]]) {
+      const arm = a[s] || {};
+      // arms hang -Y: forward flexion is a positive roll; abduction swings out to the side
+      T['shoulder_' + s].copy(q(-z * num(arm.upper_arm_abduction), 0, num(arm.upper_arm_flexion)));
+      T['elbow_' + s].copy(q(0, 0, num(arm.elbow_flexion)));
+      T['wrist_' + s].copy(q(-z * num(arm.wrist_deviation), 0, num(arm.wrist_flexion)));
+      // thigh angle from vertical = hip flexion measured against the (possibly bent) trunk
+      const thigh = clamp(num(a[s + '_hip_flexion']) - trunk, -40, 120);
+      const knee = num(a[s + '_knee_flexion']);
+      T['hip_' + s].copy(q(0, 0, thigh));
+      T['knee_' + s].copy(q(0, 0, -knee));
+      T['ankle_' + s].copy(q(0, 0, clamp(knee - thigh, -50, 60)));
+    }
+    if (this.ghost) return;
+    const gov = side || 'left', other = gov === 'left' ? 'right' : 'left';
+    const L = this.labels, arm = a[gov] || {};
+    const set = (k, text, dim) => { if (L[k]) { L[k].innerHTML = text; L[k].classList.toggle('dim', !!dim); } };
+    set('trunk', '<b>Trunk</b> ' + num(a.trunk_flexion).toFixed(0) + '°');
+    set('neck', '<b>Neck</b> ' + num(a.neck_flexion).toFixed(0) + '°');
+    set('shoulder', '<b>Upper arm</b> ' + num(arm.upper_arm_flexion).toFixed(0) + '°');
+    set('elbow', '<b>Elbow</b> ' + num(arm.elbow_flexion).toFixed(0) + '°');
+    set('wrist', '<b>Wrist</b> ' + num(arm.wrist_flexion).toFixed(0) + '°');
+    set('knee', '<b>Knee</b> ' + num(a[gov + '_knee_flexion']).toFixed(0) + '°');
+    set('other', '<b>' + other + ' arm</b> ' + num((a[other] || {}).upper_arm_flexion).toFixed(0) + '°', true);
+  }
+
+  attachLabels(side) {
+    for (const el of Object.values(this.labels)) el.remove();
+    for (const n of Object.values(this.nodes)) n.children.filter(c => c.isCSS2DObject).forEach(c => n.remove(c));
+    this.labels = {};
+    const other = side === 'left' ? 'right' : 'left';
+    this.label('trunk', this.nodes.chest, DIM.trunk * 0.55, true);
+    this.label('neck', this.nodes.neck, DIM.neck + DIM.head + 0.02);
+    this.label('shoulder', this.nodes['shoulder_' + side], -0.06);
+    this.label('elbow', this.nodes['elbow_' + side], 0);
+    this.label('wrist', this.nodes['wrist_' + side], -0.02);
+    this.label('knee', this.nodes['knee_' + side], 0, true);
+    this.label('other', this.nodes['elbow_' + other], 0, true);
+  }
+
+  /* colour segments 0..1 heat; dots on labels follow */
+  setHeat(heat) {
+    if (this.ghost) return;
+    for (const [seg, meshes] of Object.entries(this.meshes)) {
+      const t = heat[seg];
+      const c = (t === undefined || t === null) ? COLOURS.neutral : heatColour(clamp(t, 0, 1));
+      for (const m of meshes) {
+        m.material.color.copy(c);
+        m.material.emissive.copy(c);
+        m.material.emissiveIntensity = (t === undefined || t === null) ? 0.18 : 0.22 + 0.5 * clamp(t, 0, 1);
+      }
+    }
+  }
+
+  update(k) {
+    for (const [name, node] of Object.entries(this.nodes)) node.quaternion.slerp(this.targets[name], k);
+  }
+}
+
+const twin = new Mannequin(false);
+const ghost = new Mannequin(true);      // stays neutral so the deviation is visible
+ghost.setPose({ left: { elbow_flexion: 0 }, right: { elbow_flexion: 0 } }, 'left');
+twin.attachLabels('left');
+twin.setPose({ left: {}, right: {} }, 'left');
+for (const el of Object.values(twin.labels)) el.style.opacity = 0;   // until scored
+
+/* click a segment -> jump to its finding */
+const ray = new THREE.Raycaster();
+const pointer = new THREE.Vector2();
+let hovered = null;
+const SEGMENT_TO_FINDING = {
+  trunk: 'trunk', neck: 'neck', legs: 'legs',
+  upper_arm_left: 'shoulder', upper_arm_right: 'shoulder',
+  lower_arm_left: 'elbow', lower_arm_right: 'elbow',
+  hand_left: 'wrist', hand_right: 'wrist',
+};
+const SEGMENT_NAME = {
+  trunk: 'Trunk', neck: 'Neck and head', legs: 'Legs',
+  upper_arm_left: 'Left upper arm', upper_arm_right: 'Right upper arm',
+  lower_arm_left: 'Left forearm', lower_arm_right: 'Right forearm',
+  hand_left: 'Left wrist', hand_right: 'Right wrist',
+};
+function pick(ev) {
+  const r = renderer.domElement.getBoundingClientRect();
+  pointer.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(pointer, camera);
+  const hits = ray.intersectObject(twin.root, true).filter(h => h.object.userData.segment);
+  return hits.length ? hits[0].object.userData.segment : null;
+}
+let downAt = null;
+renderer.domElement.addEventListener('pointermove', ev => {
+  const seg = pick(ev);
+  if (seg !== hovered) {
+    hovered = seg;
+    renderer.domElement.style.cursor = seg ? 'pointer' : 'grab';
+  }
+});
+renderer.domElement.addEventListener('pointerdown', ev => { downAt = [ev.clientX, ev.clientY]; });
+renderer.domElement.addEventListener('pointerup', ev => {
+  if (!downAt || Math.hypot(ev.clientX - downAt[0], ev.clientY - downAt[1]) > 6) return;   // a drag, not a click
+  const seg = pick(ev);
+  if (!seg) return;
+  const key = SEGMENT_TO_FINDING[seg];
+  const list = (state.result && state.result.insights) || [];
+  const matches = list.map((f, i) => [f, i]).filter(([f]) => f.segment === key);
+  if (!matches.length) {
+    toast(SEGMENT_NAME[seg] + ': no finding — scored in its acceptable band.');
+    return;
+  }
+  document.getElementById('report').scrollIntoView({ behavior: 'smooth' });
+  document.querySelectorAll('.finding').forEach(el => el.classList.remove('flash'));
+  matches.forEach(([, i]) => { const el = document.getElementById('finding-' + i); if (el) el.classList.add('flash'); });
+  const first = document.getElementById('finding-' + matches[0][1]);
+  if (first) setTimeout(() => first.scrollIntoView({ behavior: 'smooth', block: 'center' }), 350);
+});
+
+/* render loop */
+const clock = new THREE.Clock();
+function frame() {
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const k = 1 - Math.pow(0.001, dt * 1.6);        // frame-rate independent ease
+  twin.update(k);
+  ghost.update(k);
+  const t = clock.elapsedTime;
+  particles.rotation.y = t * 0.012;
+  particles.position.y = Math.sin(t * 0.25) * 0.05;
+  ring.material.opacity = 0.28 + 0.12 * Math.sin(t * 1.8);
+  controls.update();
+  renderer.render(scene, camera);
+  labelRenderer.render(scene, camera);
+  requestAnimationFrame(frame);
+}
+frame();
+
+function fitCamera() {
+  // the HUD panels eat ~600px of width, so back off when the gap gets tight
+  const gap = window.innerWidth - 640;
+  const distance = gap < 380 ? 5.4 : gap < 620 ? 4.6 : 3.8;
+  const dir = camera.position.clone().sub(controls.target).normalize();
+  camera.position.copy(controls.target).addScaledVector(dir, distance);
+  controls.minDistance = Math.min(1.8, distance);
+  controls.maxDistance = Math.max(6.5, distance + 1);
+}
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  labelRenderer.setSize(window.innerWidth, window.innerHeight);
+  fitCamera();
+});
+fitCamera();
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Scoring helpers shared by the twin and the panels
+   ───────────────────────────────────────────────────────────────────────── */
+const MAXIMA = { upper_arm: 6, lower_arm: 3, wrist: 4, wrist_twist: 2, neck: 6, trunk: 6, legs: 4 };
+const REBA_MAX = { neck: 3, trunk: 5, legs: 4, upper_arm: 6, lower_arm: 2, wrist: 3 };
+
+function ratio(score, max) {
+  if (max <= 1) return 0;
+  if (max === 2) return score >= 2 ? 0.5 : 0;   // yes/no rows: 2 means 'not ideal', not 'worst possible'
+  return clamp((score - 1) / (max - 1), 0, 1);
+}
+function compHeat(rula, reba, key) {
+  const r = rula && rula.components[key], b = reba && reba.components[key];
+  return Math.max(r ? ratio(r.score, MAXIMA[key]) : 0, b ? ratio(b.score, REBA_MAX[key] || MAXIMA[key]) : 0);
+}
+function segmentHeat(data) {
+  const heat = {
+    trunk: compHeat(data.rula, data.reba, 'trunk'),
+    neck: compHeat(data.rula, data.reba, 'neck'),
+    legs: compHeat(data.rula, data.reba, 'legs'),
+  };
+  for (const s of ['left', 'right']) {
+    const r = data.rula.detail_by_side[s], b = data.reba.detail_by_side[s];
+    heat['upper_arm_' + s] = compHeat(r, b, 'upper_arm');
+    heat['lower_arm_' + s] = compHeat(r, b, 'lower_arm');
+    heat['hand_' + s] = compHeat(r, b, 'wrist');
+  }
+  return heat;
+}
+function cssColour(t) { return t > 0.65 ? 'var(--red)' : t > 0.3 ? 'var(--amber)' : 'var(--green)'; }
+function levelColour(level) { return level >= 3 ? 'var(--red)' : level >= 2 ? 'var(--amber)' : 'var(--green)'; }
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+function fmt(v, d = 1) { return (v === null || v === undefined || isNaN(v)) ? '—' : Number(v).toFixed(d) + '°'; }
+
+function countUp(el, to) {
+  const from = parseInt(el.dataset.v || '0', 10) || 0;
+  el.dataset.v = to;
+  const t0 = performance.now(), dur = 700;
+  (function step(now) {
+    const p = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - p, 3);
+    el.textContent = Math.round(from + (to - from) * e);
+    if (p < 1) requestAnimationFrame(step);
+  })(t0);
+}
+
+let toastTimer = null;
+function toast(text) {
+  const el = document.getElementById('toast');
+  el.textContent = text; el.classList.add('on');
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => el.classList.remove('on'), 2800);
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Task details (things a photo cannot show)
+   ───────────────────────────────────────────────────────────────────────── */
+const MOD_SPEC = [
+  { key: 'load_kg', type: 'number', label: 'Hand load (kg)', min: 0, max: 60, step: 0.5 },
+  { key: 'coupling', type: 'select', label: 'Grip / coupling (REBA)',
+    options: [['good', 'Good'], ['fair', 'Fair'], ['poor', 'Poor'], ['unacceptable', 'Unacceptable']] },
+  { key: 'assessed_side', type: 'select', label: 'Assess which arm',
+    options: [['auto', 'Worst side (auto)'], ['left', 'Left'], ['right', 'Right']] },
+  { key: 'static_posture', type: 'bool', label: 'Posture held over 1 minute' },
+  { key: 'repeated_actions', type: 'bool', label: 'Repeated more than 4× / minute' },
+  { key: 'load_static_or_repeated', type: 'bool', label: 'Load is static or repeated (RULA)' },
+  { key: 'shock_or_rapid_buildup', type: 'bool', label: 'Shock or rapid force build-up' },
+  { key: 'rapid_large_changes', type: 'bool', label: 'Rapid large posture changes (REBA)' },
+  { key: 'arm_supported', type: 'bool', label: 'Arm supported / leaning' },
+  { key: 'shoulder_raised', type: 'bool', label: 'Shoulder raised' },
+  { key: 'arm_across_midline', type: 'bool', label: 'Arm works across the midline' },
+  { key: 'wrist_twist_end_range', type: 'bool', label: 'Wrist twisted near end of range' },
+  { key: 'sitting', type: 'bool', label: 'Seated task' },
+  { key: 'legs_supported', type: 'bool', label: 'Legs supported and balanced' },
+];
+
+function buildMods() {
+  const host = document.getElementById('mods');
+  host.innerHTML = '';
+  for (const spec of MOD_SPEC) {
+    const wrap = document.createElement('label');
+    const current = state.modifiers[spec.key];
+    if (spec.type === 'bool') {
+      wrap.className = 'mod';
+      wrap.innerHTML = '<input type="checkbox"><span>' + esc(spec.label) + '</span>';
+      const box = wrap.querySelector('input');
+      box.checked = !!current;
+      box.addEventListener('change', () => { state.modifiers[spec.key] = box.checked; rescore(); });
+    } else if (spec.type === 'number') {
+      wrap.className = 'mod-num';
+      wrap.innerHTML = '<span>' + esc(spec.label) + '</span><input type="number" min="' + spec.min
+        + '" max="' + spec.max + '" step="' + spec.step + '">';
+      const field = wrap.querySelector('input');
+      field.value = current === undefined ? 0 : current;
+      field.addEventListener('change', () => { state.modifiers[spec.key] = parseFloat(field.value) || 0; rescore(); });
+    } else {
+      wrap.className = 'mod-num';
+      wrap.innerHTML = '<span>' + esc(spec.label) + '</span><select>'
+        + spec.options.map(([v, l]) => '<option value="' + v + '">' + esc(l) + '</option>').join('') + '</select>';
+      const sel = wrap.querySelector('select');
+      sel.value = current === undefined ? spec.options[0][0] : current;
+      sel.addEventListener('change', () => { state.modifiers[spec.key] = sel.value; rescore(); });
+    }
+    host.appendChild(wrap);
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Demo postures: real angle sets, scored by the real API
+   ───────────────────────────────────────────────────────────────────────── */
+function pose(body, left, right) {
+  const arm = (o) => ({ upper_arm_flexion: 0, upper_arm_abduction: 0, upper_arm_elevation: 0,
+                        elbow_flexion: 0, wrist_flexion: 0, wrist_deviation: 0, confidence: 1, ...o });
+  return { trunk_flexion: 0, trunk_side_bend: 0, trunk_twist: 0, neck_flexion: 0, neck_flexion_gravity: 0,
+           neck_side_bend: 0, neck_twist: 0, left_knee_flexion: 0, right_knee_flexion: 0,
+           left_hip_flexion: 0, right_hip_flexion: 0, shoulder_ear_ratio: 0.45,
+           confidence: { trunk: 1, neck: 1, left_arm: 1, right_arm: 1, legs: 1 },
+           ...body, left: arm(left), right: arm(right || left) };
+}
+const DEMOS = [
+  { name: 'Neutral bench work',
+    angles: pose({ neck_flexion: 6 }, { upper_arm_flexion: 12, elbow_flexion: 90 }),
+    modifiers: { legs_supported: true } },
+  { name: 'Stooped lift',
+    angles: pose({ trunk_flexion: 55, neck_flexion: 25, neck_flexion_gravity: 80,
+                   left_hip_flexion: 62, right_hip_flexion: 62, left_knee_flexion: 35, right_knee_flexion: 35 },
+                 { upper_arm_flexion: 40, upper_arm_elevation: 40, elbow_flexion: 80 }),
+    flags: {}, modifiers: { load_kg: 12, coupling: 'poor', repeated_actions: true } },
+  { name: 'Overhead reach',
+    angles: pose({ trunk_flexion: -8, neck_flexion: -18, left_hip_flexion: -8, right_hip_flexion: -8 },
+                 { upper_arm_flexion: 128, upper_arm_elevation: 128, elbow_flexion: 32, wrist_flexion: -18 },
+                 { upper_arm_flexion: 20, upper_arm_elevation: 20, elbow_flexion: 70 }),
+    modifiers: { static_posture: true } },
+  { name: 'Seated screen work',
+    angles: pose({ trunk_flexion: 9, neck_flexion: 32, neck_flexion_gravity: 41,
+                   left_hip_flexion: 98, right_hip_flexion: 98, left_knee_flexion: 88, right_knee_flexion: 88 },
+                 { upper_arm_flexion: 22, upper_arm_elevation: 22, elbow_flexion: 96, wrist_flexion: -22 }),
+    modifiers: { sitting: true, static_posture: true } },
+  { name: 'Twisted pallet drop',
+    angles: pose({ trunk_flexion: 30, trunk_twist: 28, trunk_side_bend: 12, neck_flexion: 14, neck_twist: 22,
+                   left_hip_flexion: 34, right_hip_flexion: 22, left_knee_flexion: 12, right_knee_flexion: 40 },
+                 { upper_arm_flexion: 58, upper_arm_abduction: 30, upper_arm_elevation: 64, elbow_flexion: 40, wrist_deviation: 14 },
+                 { upper_arm_flexion: 35, upper_arm_elevation: 35, elbow_flexion: 65 }),
+    flags: { trunk_twisted: true, trunk_side_bent: true, neck_twisted: true, left_arm_abducted: true,
+             left_wrist_deviated: true, legs_uneven: true, knee_asymmetry_deg: 28 },
+    modifiers: { load_kg: 8, coupling: 'fair' } },
+];
+
+function buildDemoStrip() {
+  const host = document.getElementById('demo-strip');
+  host.innerHTML = DEMOS.map((d, i) => '<button data-i="' + i + '">' + esc(d.name) + '</button>').join('');
+  host.querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
+    stopDemoCycle();
+    showDemo(parseInt(b.dataset.i, 10));
+    state.demoTimer = setTimeout(nextDemo, 14000);
+  }));
+}
+async function showDemo(i) {
+  state.demoIndex = i;
+  const demo = DEMOS[i];
+  state.demo = true;
+  state.angles = demo.angles;
+  state.flags = demo.flags || {};
+  state.modifiers = { ...(demo.modifiers || {}) };
+  buildMods();
+  document.querySelectorAll('#demo-strip button').forEach((b, j) => b.classList.toggle('on', j === i));
+  document.getElementById('chip').classList.remove('on');
+  document.getElementById('frame-card').classList.remove('on');
+  document.getElementById('shot-card').style.display = 'none';
+  document.getElementById('timeline-card').style.display = 'none';
+  await rescore(true);
+}
+function nextDemo() {
+  if (!state.demo) return;
+  showDemo((state.demoIndex + 1) % DEMOS.length);
+  state.demoTimer = setTimeout(nextDemo, 9000);
+}
+function stopDemoCycle() { clearTimeout(state.demoTimer); state.demoTimer = null; }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   API calls
+   ───────────────────────────────────────────────────────────────────────── */
+function leftStatus(html, kind) {
+  const box = document.getElementById('left-status');
+  box.innerHTML = html ? '<div class="note ' + (kind || 'info') + '">' + html + '</div>' : '';
+}
+
+async function health() {
+  const led = document.querySelector('#status .led'), text = document.getElementById('status-text');
+  try {
+    const r = await fetch(API + '/health');
+    const d = await r.json();
+    if (d.pose && d.pose.ready) { led.className = 'led ok'; text.textContent = 'engine ' + d.engine + ' · pose model ready'; }
+    else { led.className = 'led warn'; text.textContent = 'API up · pose model missing (python download_model.py)'; }
+  } catch (e) {
+    led.className = 'led err'; text.textContent = 'API offline — run python app.py';
+  }
+}
+
+window.triggerUpload = function (kind) {
+  const input = document.getElementById('imageInput');
+  input.accept = kind === 'video' ? 'video/*' : 'image/*';
+  input.value = '';
+  input.onchange = () => { const f = input.files[0]; if (f) analyse(f); };
+  input.click();
+};
+window.startCamera = function () {
+  leftStatus('Live analysis runs in the desktop viewer: <code>python main.py</code>. Same engine, same numbers.', 'info');
+};
+
+document.addEventListener('dragover', ev => { ev.preventDefault(); });
+document.addEventListener('drop', ev => {
+  ev.preventDefault();
+  const f = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
+  if (f) analyse(f);
+});
+
+async function analyse(file) {
+  const isVideo = /^video\//.test(file.type);
+  stopDemoCycle();
+  state.demo = false;
+  document.getElementById('demo-tag').style.display = 'none';
+  document.querySelectorAll('#demo-strip button').forEach(b => b.classList.remove('on'));
+  const chip = document.getElementById('chip');
+  chip.classList.add('on');
+  document.getElementById('chip-name').textContent = file.name;
+  document.getElementById('chip-sub').textContent = (isVideo ? 'Sampling frames' : 'Detecting pose') + ' · ' + (file.size / 1024 / 1024).toFixed(1) + ' MB';
+  leftStatus('<span class="spinner"></span>&nbsp; ' + (isVideo ? 'Scoring every sampled frame…' : 'Detecting pose and scoring…'));
+
+  const body = new FormData();
+  body.append(isVideo ? 'video' : 'image', file);
+  body.append('options', JSON.stringify(state.modifiers));
+  try {
+    const r = await fetch(API + (isVideo ? '/analyze-video' : '/analyze'), { method: 'POST', body });
+    const data = await r.json();
+    if (!r.ok) {
+      leftStatus('<strong>' + esc(data.error || 'Analysis failed.') + '</strong>'
+        + (data.code === 'pose_backend' ? '<div style="margin-top:6px;">Run <code>python download_model.py</code> once, then retry.</div>' : ''), 'err');
+      document.getElementById('chip-sub').textContent = 'Failed';
+      return;
+    }
+    leftStatus('');
+    state.angles = data.angles;
+    state.flags = data.flags;
+    document.getElementById('chip-sub').textContent = isVideo
+      ? data.frames_sampled + ' frames · worst at ' + data.worst_frame_time_s + ' s'
+      : data.image.width + '×' + data.image.height + ' · ' + data.view.view + ' view';
+    render(data);
+  } catch (e) {
+    leftStatus('<strong>Could not reach the API.</strong><div style="margin-top:6px;">Start it with <code>python app.py</code> and open <code>http://127.0.0.1:5000/</code>.</div>', 'err');
+    document.getElementById('chip-sub').textContent = 'Offline';
+  }
+}
+
+async function rescore(fromDemo) {
+  if (!state.angles) return;
+  try {
+    const r = await fetch(API + '/score', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ angles: state.angles, flags: state.flags, modifiers: state.modifiers }),
+    });
+    const data = await r.json();
+    if (!r.ok) { leftStatus(esc(data.error || 'Rescoring failed.'), 'err'); return; }
+    if (!fromDemo && state.result) {
+      for (const k of ['annotated_image', 'view', 'warnings', 'timeline', 'peak', 'image', 'worst_frame_time_s', 'frames_sampled'])
+        data[k] = state.result[k];
+    }
+    render(data);
+  } catch (e) {
+    // API offline: still pose the twin so the page is not dead
+    twin.attachLabels('left');
+    twin.setPose(state.angles, 'left');
+    twin.setHeat({});
+    if (fromDemo) leftStatus('API offline — showing the pose without scores. Start it with <code>python app.py</code>.', 'warn');
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Rendering everything from one result
+   ───────────────────────────────────────────────────────────────────────── */
+const ANGLE_ROWS = [
+  ['Trunk flexion', a => a.trunk_flexion, 'vertical (+ forward)'],
+  ['Trunk side bend', a => a.trunk_side_bend, 'frontal plane'],
+  ['Trunk twist', a => a.trunk_twist, 'shoulders vs hips'],
+  ['Neck flexion', a => a.neck_flexion, 'trunk axis (+ forward)'],
+  ['Neck twist', a => a.neck_twist, 'head vs shoulders'],
+  ['Upper arm flexion', (a, s) => a[s].upper_arm_flexion, 'trunk axis, sagittal'],
+  ['Upper arm abduction', (a, s) => a[s].upper_arm_abduction, 'out of sagittal plane'],
+  ['Upper arm elevation', (a, s) => a[s].upper_arm_elevation, 'total, any direction'],
+  ['Elbow flexion', (a, s) => a[s].elbow_flexion, '0 = straight arm'],
+  ['Wrist flexion', (a, s) => a[s].wrist_flexion, 'forearm (+ palmar)'],
+  ['Wrist deviation', (a, s) => a[s].wrist_deviation, 'radial / ulnar'],
+  ['Hip flexion', (a, s) => a[s + '_hip_flexion'], 'thigh vs trunk'],
+  ['Knee flexion (left)', a => a.left_knee_flexion, '0 = straight leg'],
+  ['Knee flexion (right)', a => a.right_knee_flexion, '0 = straight leg'],
+];
+const COMPONENT_ROWS = [
+  ['upper_arm', 'Upper arm'], ['lower_arm', 'Lower arm'], ['wrist', 'Wrist'],
+  ['wrist_twist', 'Wrist twist'], ['neck', 'Neck'], ['trunk', 'Trunk'], ['legs', 'Legs'],
+];
+const SEV = {
+  critical: 'var(--red)', high: 'var(--red)', medium: 'var(--amber)', low: 'var(--green)', info: 'var(--fg2)',
+};
+
+function render(data) {
+  state.result = data;
+  const rula = data.rula, reba = data.reba, side = rula.governing_side;
+
+  /* twin */
+  twin.attachLabels(side);
+  twin.setPose(data.angles, side);
+  twin.setHeat(segmentHeat(data));
+  for (const el of Object.values(twin.labels)) el.style.opacity = '';
+  const heatDot = (k, t) => { const el = twin.labels[k]; if (el && !el.querySelector('.dot')) el.insertAdjacentHTML('afterbegin', '<span class="dot"></span>'); if (el) el.querySelector('.dot').style.background = cssColour(t); };
+  heatDot('trunk', compHeat(rula, reba, 'trunk'));
+  heatDot('neck', compHeat(rula, reba, 'neck'));
+  heatDot('shoulder', compHeat(rula, reba, 'upper_arm'));
+  heatDot('elbow', compHeat(rula, reba, 'lower_arm'));
+  heatDot('wrist', compHeat(rula, reba, 'wrist'));
+  heatDot('knee', compHeat(rula, reba, 'legs'));
+  const riskHex = reba.risk_level >= 3 ? 0xff6b6b : reba.risk_level >= 2 ? 0xffc53d : 0x4ade80;
+  riskLight.color.setHex(riskHex);
+  riskLight.intensity = 1.5 + reba.risk_level * 1.2;
+  ring.material.color.setHex(riskHex);
+
+  /* HUD scores */
+  const rc = document.getElementById('rula-card'), bc = document.getElementById('reba-card');
+  rc.style.setProperty('--c', levelColour(rula.action_level));
+  bc.style.setProperty('--c', levelColour(reba.risk_level));
+  countUp(document.getElementById('rula-n'), rula.grand_score);
+  countUp(document.getElementById('reba-n'), reba.reba_score);
+  document.getElementById('rula-pill').textContent = 'Action level ' + rula.action_level + ' · ' + rula.action_name;
+  document.getElementById('reba-pill').textContent = reba.risk + ' risk';
+  document.getElementById('rula-act').textContent = rula.action;
+  document.getElementById('reba-act').textContent = reba.action;
+  document.getElementById('side-note').textContent = side + ' arm governs';
+  document.getElementById('demo-tag').style.display = state.demo ? '' : 'none';
+
+  document.getElementById('heat').innerHTML = COMPONENT_ROWS.map(([k, label]) => {
+    const r = rula.components[k], b = reba.components[k];
+    if (!r && !b) return '';
+    const t = compHeat(rula, reba, k);
+    const score = Math.max(r ? r.score : 0, b ? b.score : 0);
+    return '<div class="heat-row"><span>' + label + '</span><div class="bar"><i style="width:'
+      + Math.round(8 + t * 92) + '%;background:' + cssColour(t) + '"></i></div><span class="n">'
+      + (r ? r.score : '·') + '/' + (b ? b.score : '·') + '</span></div>';
+  }).join('');
+
+  /* capture info + warnings */
+  const kv = document.getElementById('view-kv');
+  if (data.view) {
+    kv.innerHTML = '<span>view</span><b>' + esc(data.view.view) + ', facing ' + esc(data.view.facing) + '</b>'
+      + '<span>near side</span><b>' + esc(data.view.near_side) + '</b>'
+      + (data.view.shoulder_rotation_deg !== null && data.view.shoulder_rotation_deg !== undefined
+         ? '<span>shoulder rotation</span><b>' + data.view.shoulder_rotation_deg + '°</b>' : '');
+  } else {
+    kv.innerHTML = state.demo ? '<span>source</span><b>synthetic demo posture</b>' : '';
+  }
+  document.getElementById('warnings').innerHTML = (data.warnings || []).map(w => '<div class="note warn">' + esc(w) + '</div>').join('');
+
+  /* source frame */
+  const fc = document.getElementById('frame-card'), sc = document.getElementById('shot-card');
+  if (data.annotated_image) {
+    document.getElementById('frame-img').src = data.annotated_image;
+    document.getElementById('shot').src = data.annotated_image;
+    document.getElementById('frame-cap').textContent = data.worst_frame_time_s !== undefined
+      ? 'Worst frame · ' + data.worst_frame_time_s + ' s' : 'Analysed frame';
+    fc.classList.add('on'); sc.style.display = '';
+  } else { fc.classList.remove('on'); sc.style.display = 'none'; }
+
+  /* timeline sparkline for clips */
+  const tc = document.getElementById('timeline-card');
+  if (data.timeline && data.timeline.length > 1) {
+    tc.style.display = '';
+    const T = data.timeline, W = 600, H = 70;
+    const pts = (key, max) => T.map((f, i) => (i / (T.length - 1) * W).toFixed(1) + ',' + (H - 4 - (f[key] / max) * (H - 8)).toFixed(1)).join(' ');
+    document.getElementById('spark').innerHTML =
+      '<polyline points="' + pts('reba', 15) + '" fill="none" stroke="#ff6b6b" stroke-width="2"/>'
+      + '<polyline points="' + pts('rula', 7) + '" fill="none" stroke="#4f8cff" stroke-width="2"/>';
+    document.getElementById('timeline-note').textContent =
+      T.length + ' frames · peak REBA ' + data.peak.reba + ' / RULA ' + data.peak.rula + ' · mean REBA ' + data.peak.mean_reba;
+  } else tc.style.display = 'none';
+
+  /* report tables */
+  document.getElementById('report-sub').textContent = (state.demo ? 'Demo posture. ' : '')
+    + 'Left arm RULA ' + rula.sides.left + ', right arm RULA ' + rula.sides.right
+    + ' · REBA ' + reba.sides.left + ' / ' + reba.sides.right + '. Every number below is a chart lookup you can check against a printed worksheet.';
+  document.getElementById('angle-side').textContent = 'arm values: ' + side + ' side';
+  document.getElementById('side-info').textContent = 'governing side: ' + side;
+  document.getElementById('angle-rows').innerHTML = ANGLE_ROWS.map(([label, get, ref]) =>
+    '<tr><td>' + label + '</td><td class="num">' + fmt(get(data.angles, side)) + '</td><td class="band">' + ref + '</td></tr>').join('');
+
+  document.getElementById('component-rows').innerHTML = COMPONENT_ROWS.map(([k, label]) => {
+    const r = rula.components[k], b = reba.components[k], c = r || b;
+    if (!c) return '';
+    const adj = (c.adjustments || []).map(a => ' <span class="band">(' + (a.delta > 0 ? '+' : '') + a.delta + ' ' + esc(a.label) + ')</span>').join('');
+    return '<tr><td>' + label + '</td><td class="num">' + (c.angle === null ? '—' : fmt(c.angle, 0)) + '</td>'
+      + '<td class="band">' + esc(c.band) + adj + '</td><td class="num">' + (r ? r.score : '—') + '</td><td class="num">' + (b ? b.score : '—') + '</td></tr>';
+  }).join('');
+
+  document.getElementById('table-math').innerHTML =
+      'RULA · Table A ' + rula.group_a.table_a + ' + muscle ' + rula.group_a.muscle_use + ' + force ' + rula.group_a.force
+    + ' = <b>Score A ' + rula.group_a.score + '</b> &nbsp;|&nbsp; Table B ' + rula.group_b.table_b + ' + muscle ' + rula.group_b.muscle_use
+    + ' + force ' + rula.group_b.force + ' = <b>Score B ' + rula.group_b.score + '</b> &nbsp;→&nbsp; Table C = <b>' + rula.grand_score + '</b><br>'
+    + 'REBA · Table A ' + reba.group_a.table_a + ' + force ' + reba.group_a.force + ' = <b>Score A ' + reba.group_a.score + '</b>'
+    + ' &nbsp;|&nbsp; Table B ' + reba.group_b.table_b + ' + coupling ' + reba.group_b.coupling + ' = <b>Score B ' + reba.group_b.score + '</b>'
+    + ' &nbsp;→&nbsp; Table C ' + reba.table_c + ' + activity ' + reba.activity + ' = <b>' + reba.reba_score + '</b>'
+    + (reba.activity_reasons.length ? '<br><span class="band">activity: ' + esc(reba.activity_reasons.join('; ')) + '</span>' : '');
+
+  /* findings */
+  const F = data.insights || [];
+  document.getElementById('finding-count').textContent = F.length + (F.length === 1 ? ' finding' : ' findings');
+  document.getElementById('findings').innerHTML = F.length ? F.map((f, i) => {
+    const c = SEV[f.severity] || SEV.info;
+    return '<div class="finding" id="finding-' + i + '"><div class="f-head"><span class="f-title">' + esc(f.title) + '</span>'
+      + '<span class="pill" style="color:' + c + ';border-color:' + c + ';">' + esc(f.severity) + '</span></div>'
+      + '<div class="f-body">' + esc(f.finding) + '</div><div class="f-why">' + esc(f.why) + '</div>'
+      + '<ul>' + f.actions.map(a => '<li>' + esc(a) + '</li>').join('') + '</ul>'
+      + (f.reference ? '<div class="ref">' + esc(f.reference) + '</div>' : '') + '</div>';
+  }).join('') : '<div class="finding"><div class="f-title">No significant findings</div><div class="f-body">Every worksheet row scored in its acceptable band.</div></div>';
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   boot
+   ───────────────────────────────────────────────────────────────────────── */
+window.ergovision = { state, analyse, rescore, showDemo, twin, camera };
+buildDemoStrip();
+buildMods();
+health();
+setInterval(health, 20000);
+showDemo(1).then(() => { state.demoTimer = setTimeout(nextDemo, 9000); });
+</script>
+</body>
+</html>
