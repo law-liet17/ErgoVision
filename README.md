@@ -2,95 +2,147 @@
 
 **See the risk before the injury.**
 
-Workplace ergonomics platform for industrial engineers and operations managers:
-photo / video posture analysis plus ten further assessment methods, one common
-risk band, a workstation risk register, an action tracker and a dashboard.
+Upload a photo or a short video of a workstation. ErgoVision measures the
+worker's joint angles, scores the job on the published ergonomics worksheets,
+and tells you in plain language what to change — then keeps every workstation,
+score and fix in one register.
 
-```
-web/                   the console (single-page app)
-  index.html app.css app.js   dashboard Â· tools Â· register Â· actions Â· workstations Â· method
-  twin.js                     the Three.js digital twin used by the posture lab
-app.py                 Flask API + static hosting
-store.py               SQLite risk register (workstations, assessments, actions)
-main.py                live webcam viewer (same engine)
-download_model.py      one-off: fetch the MediaPipe pose model
-ergonomics/            the engines
-  rula.py reba.py             posture worksheets (from measured joint angles)
-  angles.py landmarks.py      landmarks -> worksheet angles   (see docs/SCORING.md)
-  pose_backend.py             MediaPipe legacy or Tasks API, whichever is installed
-  tools/                      niosh Â· strain_index Â· rosa Â· owas Â· art Â· rapp Â· kim Â· biomech Â· fit
-tests/                 73 tests: tables, bands, angle extraction, end to end
-docs/                  FLOWCHART.md Â· TOOLS.md Â· SCORING.md
-```
+![The posture lab: a photo posed on the 3D digital twin, every segment coloured by its risk band](docs/images/posture-lab.jpg)
 
-## Run
-
-```bash
-pip install -r requirements.txt
-python download_model.py           # once, if /health says the pose model is missing
-python app.py                      # then open http://127.0.0.1:5000/
-```
-
-On first open the dashboard offers to load a demo plant (nine workstations,
-fifteen assessments, all produced by really running the engines). Clear it
-from the dashboard when you start entering your own.
-
-```bash
-python tests/test_scoring.py       # vision + RULA/REBA
-python tests/test_tools.py         # the other nine tools
-node --experimental-vm-modules check_js.mjs web/app.js web/twin.js   # front-end syntax
-```
+---
 
 ## What it does
 
-**Posture lab** â€” upload a side-on photo or clip (or drop it on the 3D stage).
-MediaPipe finds the body, the engine measures the worksheet angles, and the
-digital twin takes the exact pose with every segment coloured by its RULA/REBA
-band. RULA, REBA and OWAS are scored together, the worksheet arithmetic is
-shown, and the posture can be sent on to the biomechanical model or NIOSH with
-the angles and hand distance pre-filled.
-
-**Assessment tools** â€” NIOSH lifting equation (with composite index), Moore-Garg
-Strain Index, ROSA, OWAS, HSE ART, HSE RAPP, KIM-LHC, a static L5/S1 and
-shoulder biomechanical model, and an anthropometric workstation-fit check. Each
-form rescoring live; each result shows the score, its band, the row-by-row
-breakdown and a fix list ordered by the hierarchy of controls.
-
-**Risk register** â€” every saved assessment against its workstation, ranked by
-band, filterable, exportable to CSV, with a printable report per assessment
-and follow-up actions (owner, due date, status).
-
-**Dashboard** â€” KPI tiles, a workstation Ã— tool heat-map, band distribution,
-assessments by tool, activity trend and the priority queue.
-
-**Method** â€” the seven-stage flowchart, a triage wizard that recommends tools
-for a task type, and the validation status of every tool.
-
-## Validation status (shown on every tool)
-
-* **verified** â€” tables and equations checked by unit tests against the published source: RULA, REBA, NIOSH, Strain Index
-* **transcribed** â€” transcribed from the published sheet, confirm before regulatory use: OWAS, ROSA, ART, RAPP, KIM
-* **model** â€” engineering estimate or design rule: L5/S1 biomechanics, workstation fit
-
-Details and the band mapping for every tool: [docs/TOOLS.md](docs/TOOLS.md).
-
-## API (summary)
-
-| Route | Purpose |
+| | |
 |---|---|
-| `POST /analyze`, `/analyze-video`, `/score` | vision: angles â†’ RULA/REBA/OWAS |
-| `GET /api/tools`, `POST /api/tools/<id>` | catalogue and tool runs |
-| `/api/workstations`, `/api/assessments`, `/api/actions` | the register (CRUD) |
-| `GET /api/dashboard` | aggregated view |
-| `POST /api/demo/seed`, `/api/demo/clear` | demo data |
+| **Measures** | MediaPipe finds 33 body points; the engine converts them into the angles the worksheets are actually defined on — each joint against its correct reference line |
+| **Scores** | RULA, REBA and OWAS from the photo; nine more methods from what you observe on the floor |
+| **Explains** | every score comes with its row-by-row arithmetic, so you can check it against a printed worksheet |
+| **Prioritises** | one shared 0–4 action band across all eleven methods, so a lifting index and a chair score rank in the same register |
+| **Tracks** | fixes with an owner and a due date, and a dashboard showing which station needs attention first |
 
-## Accuracy limits
+### The eleven methods
 
-* RULA/REBA angles are sagittal; a front-on photo underestimates them and the
-  lab says so in its warnings.
-* Single-camera depth is weak: twist, side bending and abduction are detected
-  as flags you can override, not trusted measurements.
-* The biomechanical model is a two-segment static estimate for ranking, not a
-  3D dynamic simulation.
-* Both posture worksheets and every tool here are screening methods: they say
-  where to look and how urgently, not whether a particular worker will be injured.
+| Posture | Manual handling | Repetition | Office | Engineering |
+|---|---|---|---|---|
+| RULA · REBA · OWAS | NIOSH lifting equation · KIM-LHC · RAPP | Strain Index · HSE ART | ROSA | L5/S1 load model · Workstation fit |
+
+Thresholds, sources and the band mapping for every one: **[docs/TOOLS.md](docs/TOOLS.md)**.
+
+---
+
+## Run it
+
+```bash
+pip install -r requirements.txt
+python download_model.py        # one-off: fetches the 9 MB pose model
+python app.py                   # then open http://127.0.0.1:5000/
+```
+
+```bash
+python tests/test_scoring.py    # vision + RULA/REBA — 39 tests
+python tests/test_tools.py      # the other nine methods — 34 tests
+```
+
+On first open the dashboard offers a demo plant: nine workstations and fifteen
+assessments, every number produced by really running the engines. Clear it from
+the dashboard when you start entering your own.
+
+---
+
+## The console
+
+Scores with the worksheet arithmetic behind them, then the fixes head to toe —
+worst area first, in words a supervisor can act on:
+
+![Score cards: RULA 7 of 7, REBA 8 of 15, OWAS 3 of 4, with the verdict line](docs/images/scores.jpg)
+
+![The fix list grouped by body area, each with the measured angle and the target](docs/images/fixes.jpg)
+
+Every workstation against every method, so the worst job on the floor is
+obvious at a glance:
+
+![Risk heat-map: nine workstations by tool, coloured by action band](docs/images/heat-map.jpg)
+
+And the follow-up, with a name and a date on each item:
+
+![The action tracker, grouped by workstation with overdue items flagged](docs/images/actions.jpg)
+
+---
+
+## Deploy it
+
+The app is Python with MediaPipe, so GitHub Pages cannot host it — it needs a
+container host. A `Dockerfile` and a Render blueprint are included.
+
+**Render** — New → Blueprint → point it at this repo. `render.yaml` does the rest.
+
+**Anywhere else that takes Docker:**
+
+```bash
+docker build -t ergovision .
+docker run -p 8000:8000 ergovision
+```
+
+The pose model is downloaded during the build, so the container never fetches it
+at run time. On a free plan there is no persistent disk: the register resets on
+each deploy, which is fine for a demo — uncomment the `disk:` block in
+`render.yaml` on a paid plan to keep real records.
+
+---
+
+## How it is put together
+
+```
+web/                 the console (dashboard · register · actions · guided assessment)
+  twin.js              the Three.js digital twin, posed by the measured angles
+app.py               Flask API + static hosting
+store.py             SQLite risk register: workstations, assessments, actions
+main.py              live webcam viewer, same engine
+ergonomics/
+  angles.py            landmarks -> the angles the worksheets need  <- the hard part
+  rula.py reba.py      the posture worksheets, transcribed as lookup tables
+  pose_backend.py      works with either MediaPipe generation
+  tools/               niosh · kim · rapp · strain_index · art · rosa · owas · biomech · fit
+tests/               73 tests over the tables, the bands and the angle extraction
+docs/                SCORING.md · TOOLS.md · FLOWCHART.md
+promo/               the 35-second promo film and its voice-over
+```
+
+**[docs/SCORING.md](docs/SCORING.md)** is the one to read if you care how a pose
+becomes a score: which reference line each joint is measured against, why `0°`
+means different things on different worksheet rows, and why direction has to be
+kept instead of taking the magnitude.
+
+**[docs/FLOWCHART.md](docs/FLOWCHART.md)** is the seven-stage flow from a task to
+a ranked fix list.
+
+---
+
+## Honest limits
+
+* RULA and REBA are defined on **sagittal angles** — shoot from the worker's
+  side. A front-on photo underestimates them, and the report says so.
+* Single-camera depth is weak, so twist, side bending and abduction are
+  **flags you confirm**, not trusted measurements.
+* Load, repetition, duration, grip and arm support are **not visible in a
+  photograph**. The app asks for them; it never guesses.
+* The L5/S1 model is a two-segment static estimate for ranking and explanation,
+  not a 3D dynamic simulation.
+* Every method here is a **screening tool**: it says where to look and how
+  urgently, not whether a particular worker will be injured.
+
+Validation status is shown on every tool in the app — `verified` (checked by
+unit tests against the published source), `transcribed` (confirm against the
+printed worksheet before regulatory use) or `model` (an engineering estimate).
+
+---
+
+## Sources
+
+McAtamney & Corlett (RULA, 1993) · Hignett & McAtamney (REBA, 2000) ·
+Karhu, Kansi & Kuorinka (OWAS, 1977) · Waters, Putz-Anderson, Garg & Fine
+(NIOSH, 1993) · Moore & Garg (Strain Index, 1995) · Sonne, Villalta & Andrews
+(ROSA, 2012) · HSE INDG438 (ART) · HSE INDG478 (RAPP) · BAuA (KIM-LHC, 2001) ·
+Chaffin-style static biomechanics with the NIOSH 1981 compression limits ·
+Drillis & Contini anthropometric ratios.

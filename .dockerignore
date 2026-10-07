@@ -1,0 +1,11 @@
+.git
+.gitignore
+__pycache__/
+**/__pycache__/
+*.pyc
+models/
+ergovision.db
+*.bak
+.claude/
+docs/images/
+promo/vo.mp3
