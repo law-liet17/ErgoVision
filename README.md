@@ -75,7 +75,11 @@ And the follow-up, with a name and a date on each item:
 The app is Python with MediaPipe, so GitHub Pages cannot host it — it needs a
 container host. A `Dockerfile` and a Render blueprint are included.
 
-**Render** — New → Blueprint → point it at this repo. `render.yaml` does the rest.
+**Render** — one click, then sign in and confirm:
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/law-liet17/ErgoVision)
+
+Or from the dashboard: New → Blueprint → point it at this repo. `render.yaml` does the rest.
 
 **Anywhere else that takes Docker:**
 
