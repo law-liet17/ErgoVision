@@ -110,6 +110,20 @@ def _legacy_available():
         return False
 
 
+def _choose():
+    """Which backend to use.
+
+    A downloaded .task model wins: the Tasks API is the maintained path and it
+    behaves the same everywhere. The legacy solutions API is only used when no
+    model file is present and the installed wheel still carries it - some wheels
+    ship a `solutions` module that raises as soon as it is touched, which is why
+    the model file, not the module, decides.
+    """
+    if find_model() is not None:
+        return "tasks"
+    return "legacy" if _legacy_available() else "tasks"
+
+
 def find_model(name=None):
     """Locate a ``.task`` model file, or return ``None``."""
     explicit = name or os.environ.get("ERGOVISION_POSE_MODEL")
@@ -189,7 +203,7 @@ class _TasksBackend:
 
 def get_backend(static=True, complexity=1, model_path=None):
     """Return a cached backend instance (creating one is slow)."""
-    key = ("legacy" if _legacy_available() else "tasks", bool(static), int(complexity))
+    key = (_choose(), bool(static), int(complexity))
     with _LOCK:
         if key not in _CACHE:
             if key[0] == "legacy":
@@ -201,12 +215,23 @@ def get_backend(static=True, complexity=1, model_path=None):
 
 def backend_info():
     """What the engine would use right now, for /health and error messages."""
-    if _legacy_available():
-        return {"backend": "mediapipe.solutions.pose", "model": "bundled", "ready": True}
+    import sys
     model = find_model()
+    choice = _choose()
+    try:
+        import mediapipe
+        version = getattr(mediapipe, "__version__", "unknown")
+    except Exception as exc:
+        return {"backend": "none", "ready": False, "error": "mediapipe will not import: %s" % exc}
+    if choice == "legacy":
+        return {"backend": "mediapipe.solutions.pose", "model": "bundled", "ready": True,
+                "mediapipe": version, "python": sys.version.split()[0]}
     return {
         "backend": "mediapipe.tasks PoseLandmarker",
         "model": model,
         "ready": model is not None,
+        "mediapipe": version,
+        "python": sys.version.split()[0],
+        "legacy_also_available": _legacy_available(),
         "hint": None if model else "run: python download_model.py",
     }

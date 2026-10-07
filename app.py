@@ -172,9 +172,9 @@ def analyze():
         return _error(str(exc), "pose_backend", 503)
     except ValueError as exc:
         return _error(str(exc))
-    except Exception:  # pragma: no cover
+    except Exception as exc:  # pragma: no cover
         app.logger.error(traceback.format_exc())
-        return _error("Analysis failed. See the server log.", "server", 500)
+        return _error("Analysis failed: %s: %s" % (type(exc).__name__, exc), "server", 500)
     return jsonify(result)
 
 
