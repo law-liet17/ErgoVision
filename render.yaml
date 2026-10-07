@@ -18,7 +18,7 @@ services:
     region: singapore          # closest to Sri Lanka; oregon / frankfurt also fine
     branch: main
     healthCheckPath: /health
-    autoDeployTrigger: commit
+    autoDeploy: true          # rebuild on every push to main
     envVars:
       - key: ERGOVISION_MODEL_COMPLEXITY
         value: "1"             # 0 fastest, 2 most accurate and slowest
