@@ -32,7 +32,7 @@ COPY . .
 
 # Pull the pose landmarker into the image (download_model.py --yes skips the prompt).
 RUN python download_model.py --yes --variant full \
-    && python -c "from ergonomics import backend_info; info = backend_info(); print(info); assert info['ready'], 'pose model missing'"
+    && python buildcheck.py
 
 # The register lives on a volume when one is mounted; without it the data is
 # ephemeral and resets on every deploy (fine for a demo, see README).
