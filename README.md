@@ -100,6 +100,7 @@ each deploy, which is fine for a demo — uncomment the `disk:` block in
 ```
 web/                 the console (dashboard · register · actions · guided assessment)
   twin.js              the Three.js digital twin, posed by the measured angles
+  vendor/              three.js 0.160 + Chart.js 4.4, served locally so the console works offline
 app.py               Flask API + static hosting
 store.py             SQLite risk register: workstations, assessments, actions
 main.py              live webcam viewer, same engine

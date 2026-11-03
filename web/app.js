@@ -459,6 +459,8 @@ async function viewLab() {
       </div>
     </div>
 
+    <div id="lab-summary"></div>
+
     <div class="stage-wrap tall" id="stage"><div class="stage-labels" id="stage-labels"></div>
       <div class="stage-top">
         <div class="demo-strip glass" id="demo-strip"></div>
@@ -535,13 +537,26 @@ async function showDemo(i) {
   buildMods();
   $$('#demo-strip button').forEach((b, j) => b.classList.toggle('on', j === i));
   $('#chip').hidden = true; $('#frame-card').hidden = true;
+  if ($('#lab-summary')) $('#lab-summary').innerHTML = '';
   await rescore(true);
   L.timer = setTimeout(() => { if (L.demo && state.twin) showDemo((i + 1) % DEMOS.length); }, 12000);
 }
 function labStatus(html, kind) { $('#lab-status').innerHTML = html ? '<div class="note ' + (kind || 'info') + '">' + html + '</div>' : ''; }
+const VIDEO_EXT = /\.(mp4|m4v|mov|avi|mkv|webm|3gp|wmv|mpg|mpeg)$/i;
+const MAX_UPLOAD_MB = 256;
 async function analyse(file) {
-  const L = state.lab, isVideo = /^video\//.test(file.type);
-  clearTimeout(L.timer); L.demo = false;
+  const L = state.lab, isVideo = /^video\//.test(file.type) || VIDEO_EXT.test(file.name);
+  if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
+    labStatus('<strong>That file is ' + Math.round(file.size / 1048576) + ' MB — the limit is ' + MAX_UPLOAD_MB + ' MB.</strong> Trim the clip to the task, or record at 1080p.', 'err');
+    return;
+  }
+  clearTimeout(L.timer);
+  /* The demo poses carry their own task details (12 kg, poor grip, repeated…).
+     A real upload must start from a clean sheet, or the demo's load is scored
+     against the worker in the photo. */
+  if (L.demo) { L.modifiers = {}; buildMods(); }
+  L.demo = false; L.isVideo = isVideo;
+  $('#lab-summary').innerHTML = '';
   $$('#demo-strip button').forEach(b => b.classList.remove('on'));
   $('#chip').hidden = false; $('#chip-name').textContent = file.name; $('#chip-sub').textContent = (isVideo ? 'sampling frames' : 'detecting pose');
   labStatus('<span class="spinner"></span>&nbsp; ' + (isVideo ? 'Scoring every sampled frame…' : 'Detecting the pose and scoring…'));
@@ -551,6 +566,7 @@ async function analyse(file) {
     labStatus(''); L.angles = data.angles; L.flags = data.flags;
     $('#chip-sub').textContent = isVideo ? data.frames_sampled + ' frames · worst at ' + data.worst_frame_time_s + ' s' : data.image.width + '×' + data.image.height + ' · ' + data.view.view + ' view';
     labRender(data);
+    $('#lab-summary').scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (e) {
     labStatus('<strong>' + esc(e.message) + '</strong>' + (e.code === 'pose_backend' ? '<div style="margin-top:6px">Run <code>python download_model.py</code> once, then retry.</div>' : ''), 'err');
     $('#chip-sub').textContent = 'failed';
@@ -560,7 +576,7 @@ async function rescore(fromDemo) {
   const L = state.lab; if (!L.angles) return;
   try {
     const data = await api('/score', { body: { angles: L.angles, flags: L.flags, modifiers: L.modifiers } });
-    if (!fromDemo && L.result) for (const k of ['annotated_image', 'view', 'warnings', 'timeline', 'peak', 'image', 'worst_frame_time_s', 'frames_sampled', 'hands']) data[k] = L.result[k];
+    if (!fromDemo && L.result) for (const k of ['annotated_image', 'view', 'warnings', 'timeline', 'peak', 'image', 'worst_frame_time_s', 'frames_sampled', 'hands', 'exposure']) data[k] = L.result[k];
     labRender(data);
   } catch (e) {
     if (state.twin) { state.twin.setPose(L.angles, 'left'); state.twin.setHeat({}); }
@@ -611,14 +627,7 @@ function labRender(data) {
   } else tc.hidden = true;
 
   /* what to change, head to toe: one card per body area, worst first */
-  const byArea = {};
-  for (const f of data.insights || []) (byArea[f.segment] = byArea[f.segment] || []).push(f);
-  const cards = AREAS.map(area => {
-    const t = compHeat(rula, reba, area.comp), lvl = heatLevel(t);
-    const deg = area.angle(data.angles, side);
-    const fixes = byArea[area.key] || [];
-    return { area, lvl, deg, fixes };
-  }).sort((a, b) => b.lvl - a.lvl || (b.deg || 0) - (a.deg || 0));
+  const { byArea, cards } = areaCards(data);
   const extras = ['load', 'organisation'].flatMap(k => byArea[k] || []);
   $('#areas').innerHTML = cards.map(({ area, lvl, deg, fixes }) => `
     <div class="area" id="area-${area.key}" style="--c:${bandColour(lvl)}">
@@ -635,6 +644,9 @@ function labRender(data) {
     + (extras.length ? `<div class="area" style="--c:${bandColour(2)}"><div class="area-head"><div><div class="area-name">The task itself</div>
         <div class="area-angle muted">load, repetition and grip — from the task details, not the photo</div></div></div>
       <ul class="area-fixes">${extras.flatMap(f => f.actions.slice(0, 2)).slice(0, 4).map(a => '<li>' + esc(a) + '</li>').join('')}</ul></div>` : '');
+
+  /* the plain-language answer, at the top */
+  if (!L.demo) summaryRender(data, cards, v); else $('#lab-summary').innerHTML = '';
 
   /* what to assess next */
   const next = recommendTools(data, L.modifiers);
@@ -661,6 +673,71 @@ function labRender(data) {
   $('#view-kv').textContent = data.view
     ? 'view ' + data.view.view + ' · facing ' + data.view.facing + ' · near side ' + data.view.near_side + (data.hands ? ' · hands ' + data.hands.horizontal_m + ' m from the hips' : '')
     : (L.demo ? 'source: synthetic demo posture' : '');
+}
+
+function areaCards(data) {
+  const rula = data.rula, reba = data.reba, side = rula.governing_side;
+  const byArea = {};
+  for (const f of data.insights || []) (byArea[f.segment] = byArea[f.segment] || []).push(f);
+  const cards = AREAS.map(area => {
+    const t = compHeat(rula, reba, area.comp), lvl = heatLevel(t);
+    const deg = area.angle(data.angles, side);
+    const fixes = byArea[area.key] || [];
+    return { area, lvl, deg, fixes };
+  }).sort((a, b) => b.lvl - a.lvl || (b.deg || 0) - (a.deg || 0));
+  return { byArea, cards };
+}
+
+/* The answer a supervisor reads first: one level, one sentence, three fixes. */
+const LEVEL_WORD = ['Safe', 'Low risk', 'Medium risk', 'High risk', 'Very high risk'];
+const LEVEL_TODO = [
+  'This posture is fine. Nothing to change.',
+  'Acceptable. Improve it only if the change is cheap.',
+  'Plan a change to this workstation, then check it again.',
+  'Change this workstation soon — it is likely to cause injury.',
+  'Stop and redesign this task now.',
+];
+function summaryRender(data, cards, v) {
+  const L = state.lab, level = v.level, owas = data.owas;
+  const main = level >= 2 ? cards.find(c => c.lvl >= 2) : null;
+  const reason = main
+    ? '<b>Main reason:</b> ' + esc(main.area.label.toLowerCase()) + ' at ' + fmtDeg(Math.abs(main.deg)) + ' — the safe range is ' + esc(main.area.ideal) + '.'
+    : level >= 2 ? 'The score comes from the task details — load, grip or repetition — more than from one body angle.'
+    : 'No body area is far outside its safe range.';
+  const plain = t => String(t).replace(/(\d)\s*deg\b/g, '$1°');
+  const fixes = [];
+  for (const c of cards) for (const f of c.fixes) for (const a of f.actions.slice(0, 1)) if (fixes.length < 3 && !fixes.includes(plain(a))) fixes.push(plain(a));
+  const m = L.modifiers || {};
+  const hidden = !(num(m.load_kg) || m.static_posture || m.repeated_actions || m.load_static_or_repeated);
+
+  let clip = '';
+  const x = data.exposure;
+  if (x && data.timeline) {
+    const segs = x.pct_by_level.map((p, i) => p ? '<span style="flex:' + p + ';background:' + bandColour(i) + '" title="' + LEVEL_WORD[i] + ' ' + p + '%"></span>' : '').join('');
+    const legend = x.pct_by_level.map((p, i) => p ? '<span><i style="background:' + bandColour(i) + '"></i>' + LEVEL_WORD[i] + ' ' + p + '%</span>' : '').join('');
+    clip = '<div class="sum-clip"><div class="sum-clip-t">Across the clip · ' + data.frames_sampled + ' moments checked over ' + x.duration_s + ' s'
+      + ' · high risk or worse for <b>' + x.pct_high + '%</b> of the time · worst moment at ' + data.worst_frame_time_s + ' s</div>'
+      + '<div class="sum-bar">' + segs + '</div><div class="sum-legend">' + legend + '</div></div>';
+  }
+
+  $('#lab-summary').innerHTML = `
+    <div class="summary" style="--c:${bandColour(level)}">
+      <div class="sum-level">
+        <div class="sum-cap">Risk level</div>
+        <div class="sum-n">${level}<small>/4</small></div>
+        <div class="sum-word">${LEVEL_WORD[level]}</div>
+      </div>
+      <div class="sum-body">
+        <div class="sum-head">${esc(LEVEL_TODO[level])}</div>
+        <p class="sum-reason">${reason}</p>
+        ${fixes.length && level >= 1 ? '<div class="sum-fix-t">' + (level >= 2 ? 'What to do' : 'Optional improvements') + '</div><ol class="sum-fixes">' + fixes.map(a => '<li>' + esc(a) + '</li>').join('') + '</ol>' : ''}
+        ${clip}
+        ${hidden ? '<div class="sum-note">Posture only. The ' + (data.timeline ? 'video' : 'photo') + ' cannot show the weight carried or how often the move repeats — add them under <b>Task details the camera cannot see</b> for the full score.</div>' : ''}
+        <details class="sum-how"><summary>Scores: RULA ${data.rula.grand_score}/7 · REBA ${data.reba.reba_score}/15 · OWAS ${owas.score}/4 — how is this worked out?</summary>
+          <p>We find 33 points on the body and measure the angle of each joint. Two standard checklists score those angles: <b>RULA</b> (arms, neck and back) and <b>REBA</b> (whole body). Each is turned into the same 0–4 risk level, and <b>the higher one is your risk level</b> — a risk is never averaged away. <b>OWAS</b> (back, arms, legs and load) is shown as a second opinion.${data.timeline ? ' For a video we check one moment every ' + (x ? x.seconds_per_sample : 0.5) + ' s across the whole clip; the worst moment sets the level, and the bar shows how long the worker spent at each level.' : ''} Full arithmetic is under “Measured angles and the worksheet arithmetic” below.</p>
+        </details>
+      </div>
+    </div>`;
 }
 
 function postureRecords(data) {

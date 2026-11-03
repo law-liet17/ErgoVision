@@ -4,7 +4,8 @@
 
 Vision (posture lab)
     POST /analyze             multipart image  -> angles, RULA, REBA, OWAS, insights, overlay
-    POST /analyze-video       multipart video  -> per-frame scores + worst frame
+    POST /analyze-video       multipart video  -> scores sampled across the whole clip,
+                              worst frame in full, time spent at each risk level
     POST /score               JSON angles + modifiers -> rescored, no re-upload
     GET  /reference/tables    RULA/REBA tables and thresholds
 
@@ -28,6 +29,8 @@ Static
 """
 
 import json
+import math
+import mimetypes
 import os
 import tempfile
 import traceback
@@ -53,12 +56,19 @@ from ergonomics import reba, rula
 from ergonomics.tools import TOOLS, VISION_TOOLS, catalogue, run_tool
 from ergonomics.tools import niosh as niosh_tool
 
+# Windows reads MIME types from the registry, where .js is often mapped to
+# text/plain; browsers then refuse to run app.js as a module and the console
+# never loads. Pin the types the web app needs.
+mimetypes.add_type("application/javascript", ".js")
+mimetypes.add_type("application/javascript", ".mjs")
+mimetypes.add_type("text/css", ".css")
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 WEB = os.path.join(HERE, "web")
 
 app = Flask(__name__, static_folder=None)
 CORS(app)
-app.config["MAX_CONTENT_LENGTH"] = 64 * 1024 * 1024  # 64 MB uploads
+app.config["MAX_CONTENT_LENGTH"] = 256 * 1024 * 1024  # 256 MB: a minute of 1080p phone video fits
 MODEL_COMPLEXITY = int(os.environ.get("ERGOVISION_MODEL_COMPLEXITY", "1"))
 
 TOOL_NAMES = {t["id"]: t["name"] for t in catalogue()["tools"]}
@@ -93,6 +103,21 @@ def _json():
 
 def _error(message, code="bad_input", status=400):
     return jsonify({"error": message, "code": code}), status
+
+
+VIDEO_UNREADABLE = ("Could not read that video. Try an MP4 recorded in H.264 "
+                    "(on iPhone: Settings > Camera > Formats > Most Compatible).")
+
+
+def _overall_level(result):
+    """One 0-4 risk level for a posture: the worse of RULA and REBA.
+
+    The same rule the console uses for its verdict - a risk is never averaged
+    away by the method that happens to score the posture more kindly. OWAS is
+    reported beside it but does not set the level: it is a transcribed sheet
+    and its leg code is unreliable when the feet are out of shot.
+    """
+    return max(int(result["rula"]["action_level"]), int(result["reba"]["risk_level"]))
 
 
 # ---------------------------------------------------------------------------
@@ -199,31 +224,48 @@ def analyze_video():
         tmp.close()
         capture = cv2.VideoCapture(tmp.name)
         if not capture.isOpened():
-            return _error("Could not read that video file.")
-        fps = capture.get(cv2.CAP_PROP_FPS) or 25.0
+            return _error(VIDEO_UNREADABLE, "bad_video", 422)
+        fps = capture.get(cv2.CAP_PROP_FPS)
+        if not fps or fps != fps or fps > 1000:  # missing or NaN in some phone containers
+            fps = 25.0
+        total = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        # Spread the samples over the WHOLE clip: one every `every_ms` at most, and
+        # never more than `max_frames`, so a long clip is sampled more sparsely
+        # instead of only its first half-minute being looked at.
         step = max(1, int(round(fps * every_ms / 1000.0)))
-        frames, worst, index, sampled = [], None, 0, 0
+        if total > 0:
+            step = max(step, int(math.ceil(total / float(max_frames))))
+        frames, worst, index, sampled, decoded = [], None, 0, 0, 0
         while sampled < max_frames:
+            if index % step:
+                if not capture.grab():  # skip without decoding: much faster on long clips
+                    break
+                index += 1
+                continue
             ok, frame = capture.read()
             if not ok:
                 break
-            if index % step == 0:
-                sampled += 1
-                try:
-                    result = analyse_image(frame, modifiers=modifiers, annotate=False, static=False,
-                                           complexity=MODEL_COMPLEXITY)
-                except NoPoseDetected:
-                    index += 1
-                    continue
-                entry = {"time_s": round(index / fps, 2), "rula": result["rula"]["grand_score"],
-                         "reba": result["reba"]["reba_score"], "owas": result["owas"]["score"],
-                         "trunk": result["angles"]["trunk_flexion"], "neck": result["angles"]["neck_flexion"]}
-                frames.append(entry)
-                key = (result["reba"]["reba_score"], result["rula"]["grand_score"])
-                if worst is None or key > worst[0]:
-                    worst = (key, entry["time_s"], frame.copy())
+            decoded += 1
+            sampled += 1
+            try:
+                result = analyse_image(frame, modifiers=modifiers, annotate=False, static=False,
+                                       complexity=MODEL_COMPLEXITY)
+            except NoPoseDetected:
+                index += 1
+                continue
+            level = _overall_level(result)
+            entry = {"time_s": round(index / fps, 2), "rula": result["rula"]["grand_score"],
+                     "reba": result["reba"]["reba_score"], "owas": result["owas"]["score"],
+                     "level": level,
+                     "trunk": result["angles"]["trunk_flexion"], "neck": result["angles"]["neck_flexion"]}
+            frames.append(entry)
+            key = (level, result["reba"]["reba_score"], result["rula"]["grand_score"])
+            if worst is None or key > worst[0]:
+                worst = (key, entry["time_s"], frame.copy())
             index += 1
         capture.release()
+        if decoded == 0:
+            return _error(VIDEO_UNREADABLE, "bad_video", 422)
     finally:
         try:
             os.unlink(tmp.name)
@@ -239,6 +281,17 @@ def analyze_video():
     out["peak"] = {"rula": max(f["rula"] for f in frames), "reba": max(f["reba"] for f in frames),
                    "mean_rula": round(sum(f["rula"] for f in frames) / len(frames), 2),
                    "mean_reba": round(sum(f["reba"] for f in frames) / len(frames), 2)}
+    # How long the worker spent at each 0-4 risk level. Each sample stands for
+    # `step / fps` seconds of the clip, so the shares are shares of time.
+    counts = [0] * 5
+    for f in frames:
+        counts[f["level"]] += 1
+    out["exposure"] = {
+        "seconds_per_sample": round(step / fps, 2),
+        "duration_s": round((total / fps) if total else frames[-1]["time_s"], 1),
+        "pct_by_level": [round(100.0 * c / len(frames)) for c in counts],
+        "pct_high": round(100.0 * sum(counts[3:]) / len(frames)),
+    }
     return jsonify(out)
 
 
@@ -397,8 +450,12 @@ def api_demo_clear():
 
 @app.errorhandler(413)
 def too_large(_):
-    return _error("Upload is larger than 64 MB.", "too_large", 413)
+    return _error("Upload is larger than 256 MB. Trim the clip to the task, or record at 1080p.",
+                  "too_large", 413)
 
 
 if __name__ == "__main__":
-    app.run(debug=True, host="127.0.0.1", port=5000)
+    # No reloader: MediaPipe touches files in the Python install while it
+    # loads, the reloader treats that as a code change and restarts the server
+    # mid-upload, which the browser reports as "Failed to fetch".
+    app.run(debug=True, use_reloader=False, host="127.0.0.1", port=5000)
