@@ -9,8 +9,11 @@
 FROM python:3.12-slim
 
 # OpenCV and MediaPipe need these shared libraries even for headless work.
+# libgles2/libegl1: MediaPipe 0.10.3x loads libGLESv2.so.2 and libEGL on import.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libgl1 \
+        libgles2 \
+        libegl1 \
         libglib2.0-0 \
         libsm6 \
         libxext6 \
