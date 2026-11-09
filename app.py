@@ -4,6 +4,9 @@
 
 Vision (posture lab)
     POST /analyze             multipart image  -> angles, RULA, REBA, OWAS, insights, overlay
+                              (several people and no 'person' box -> 409 choose_person)
+    POST /analyze-multi       1-3 photos of one task ('images') -> one combined assessment,
+                              the source photo of every angle, alerts for hidden joints
     POST /analyze-video       multipart video  -> scores sampled across the whole clip,
                               worst frame in full, time spent at each risk level
     POST /score               JSON angles + modifiers -> rescored, no re-upload
@@ -42,9 +45,11 @@ from flask_cors import CORS
 import store
 from ergonomics import (
     Modifiers,
+    MultiplePeople,
     NoPoseDetected,
     PoseBackendUnavailable,
     analyse_image,
+    analyse_views,
     angles_from_dict,
     backend_info,
     decode_image,
@@ -88,6 +93,28 @@ def _modifiers_from_request():
     else:
         data = {k: v for k, v in request.form.items() if k not in ("options", "modifiers")}
     return Modifiers.from_dict(data)
+
+
+def _person_from_request():
+    """The worker chosen on the photo: a normalised [x0, y0, x1, y1] box, or None."""
+    raw = request.form.get("person")
+    if not raw:
+        return None
+    try:
+        box = [float(v) for v in json.loads(raw)]
+    except (ValueError, TypeError) as exc:
+        raise ValueError("person must be a JSON box [x0, y0, x1, y1]") from exc
+    if len(box) != 4 or not all(0.0 <= v <= 1.0 for v in box) or box[0] >= box[2] or box[1] >= box[3]:
+        raise ValueError("person must be a box [x0, y0, x1, y1] with values between 0 and 1")
+    return box
+
+
+def _choose_person(exc, **extra):
+    """409: several people in the frame - the client shows them and asks which is the worker."""
+    body = {"error": str(exc), "code": "choose_person", "people": exc.people,
+            "image": exc.image, "preview": exc.preview}
+    body.update(extra)
+    return jsonify(body), 409
 
 
 def _bool_arg(name, default=True):
@@ -188,9 +215,39 @@ def analyze():
         return _error("No file uploaded. Send the photo as the 'image' field.")
     try:
         modifiers = _modifiers_from_request()
+        person = _person_from_request()
         image = decode_image(upload.read())
         result = analyse_image(image, modifiers=modifiers, annotate=_bool_arg("annotate", True),
-                               static=True, complexity=MODEL_COMPLEXITY)
+                               static=True, complexity=MODEL_COMPLEXITY, person=person)
+    except MultiplePeople as exc:
+        return _choose_person(exc)
+    except NoPoseDetected as exc:
+        return _error(str(exc), "no_pose", 422)
+    except PoseBackendUnavailable as exc:
+        return _error(str(exc), "pose_backend", 503)
+    except ValueError as exc:
+        return _error(str(exc))
+    except Exception as exc:  # pragma: no cover
+        app.logger.error(traceback.format_exc())
+        return _error("Analysis failed: %s: %s" % (type(exc).__name__, exc), "server", 500)
+    return jsonify(result)
+
+
+@app.post("/analyze-multi")
+def analyze_multi():
+    uploads = [u for u in request.files.getlist("images") if u and u.filename]
+    if not uploads:
+        return _error("No photos uploaded. Send 1-3 photos of the same task as the 'images' field.")
+    try:
+        modifiers = _modifiers_from_request()
+        images = []
+        for number, upload in enumerate(uploads, 1):
+            try:
+                images.append(decode_image(upload.read()))
+            except ValueError as exc:
+                raise ValueError("Photo %d (%s): %s" % (number, upload.filename, exc)) from exc
+        result = analyse_views(images, modifiers=modifiers, annotate=_bool_arg("annotate", True),
+                               complexity=MODEL_COMPLEXITY)
     except NoPoseDetected as exc:
         return _error(str(exc), "no_pose", 422)
     except PoseBackendUnavailable as exc:
@@ -210,6 +267,7 @@ def analyze_video():
         return _error("No file uploaded. Send the clip as the 'video' field.")
     try:
         modifiers = _modifiers_from_request()
+        person = _person_from_request()
         every_ms = float(request.form.get("sample_ms", 500))
         max_frames = int(request.form.get("max_frames", 60))
     except ValueError as exc:
@@ -236,6 +294,11 @@ def analyze_video():
         if total > 0:
             step = max(step, int(math.ceil(total / float(max_frames))))
         frames, worst, index, sampled, decoded = [], None, 0, 0, 0
+        # The worker is followed through the clip by their box: the one clicked on
+        # the first frame, else the only person seen first. Each sample then takes
+        # the body overlapping the worker's last box, so someone walking past is
+        # never scored instead.
+        track = person
         while sampled < max_frames:
             if index % step:
                 if not capture.grab():  # skip without decoding: much faster on long clips
@@ -249,10 +312,14 @@ def analyze_video():
             sampled += 1
             try:
                 result = analyse_image(frame, modifiers=modifiers, annotate=False, static=False,
-                                       complexity=MODEL_COMPLEXITY)
+                                       complexity=MODEL_COMPLEXITY, person=track)
             except NoPoseDetected:
                 index += 1
                 continue
+            except MultiplePeople as exc:  # nobody chosen yet, and the first worker seen is ambiguous
+                capture.release()
+                return _choose_person(exc, time_s=round(index / fps, 2))
+            track = result["person"]["box"]
             level = _overall_level(result)
             entry = {"time_s": round(index / fps, 2), "rula": result["rula"]["grand_score"],
                      "reba": result["reba"]["reba_score"], "owas": result["owas"]["score"],
@@ -261,7 +328,7 @@ def analyze_video():
             frames.append(entry)
             key = (level, result["reba"]["reba_score"], result["rula"]["grand_score"])
             if worst is None or key > worst[0]:
-                worst = (key, entry["time_s"], frame.copy())
+                worst = (key, entry["time_s"], frame.copy(), track)
             index += 1
         capture.release()
         if decoded == 0:
@@ -274,7 +341,8 @@ def analyze_video():
     if not frames:
         return _error("No body detected in any sampled frame.", "no_pose", 422)
 
-    out = analyse_image(worst[2], modifiers=modifiers, annotate=True, static=True, complexity=MODEL_COMPLEXITY)
+    out = analyse_image(worst[2], modifiers=modifiers, annotate=True, static=True,
+                        complexity=MODEL_COMPLEXITY, person=worst[3])
     out["worst_frame_time_s"] = worst[1]
     out["timeline"] = frames
     out["frames_sampled"] = len(frames)

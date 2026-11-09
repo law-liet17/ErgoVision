@@ -48,6 +48,9 @@ MODEL_URLS = {
 _LOCK = threading.Lock()
 _CACHE = {}
 
+# Most people a frame is searched for; the user picks the worker among them.
+MAX_POSES = 5
+
 
 class PoseBackendUnavailable(RuntimeError):
     """Neither MediaPipe API could be initialised."""
@@ -160,6 +163,11 @@ class _LegacyBackend:
             list(world.landmark) if world else None,
         )
 
+    def detect_all(self, rgb):
+        """The legacy API tracks one person only."""
+        result = self.detect(rgb)
+        return [result] if result.pose_landmarks else []
+
 
 class _TasksBackend:
     name = "mediapipe.tasks PoseLandmarker"
@@ -182,7 +190,7 @@ class _TasksBackend:
         options = vision.PoseLandmarkerOptions(
             base_options=mp_python.BaseOptions(model_asset_path=path),
             running_mode=vision.RunningMode.IMAGE,
-            num_poses=1,
+            num_poses=MAX_POSES,
             min_pose_detection_confidence=0.5,
             min_pose_presence_confidence=0.5,
             output_segmentation_masks=False,
@@ -190,15 +198,19 @@ class _TasksBackend:
         self._landmarker = vision.PoseLandmarker.create_from_options(options)
 
     def detect(self, rgb):
+        """The most confident person, or an empty result."""
+        people = self.detect_all(rgb)
+        return people[0] if people else PoseResult(None)
+
+    def detect_all(self, rgb):
+        """Every person found, most confident first."""
         image = self._mp.Image(image_format=self._mp.ImageFormat.SRGB, data=rgb)
         out = self._landmarker.detect(image)
-        if not out.pose_landmarks:
-            return PoseResult(None)
-        world = out.pose_world_landmarks[0] if out.pose_world_landmarks else None
-        return PoseResult(
-            _normalise(out.pose_landmarks[0]),
-            _normalise(world) if world else None,
-        )
+        worlds = out.pose_world_landmarks or []
+        return [
+            PoseResult(_normalise(lms), _normalise(worlds[i]) if i < len(worlds) else None)
+            for i, lms in enumerate(out.pose_landmarks or [])
+        ]
 
 
 def get_backend(static=True, complexity=1, model_path=None):

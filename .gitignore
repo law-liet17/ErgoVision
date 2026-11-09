@@ -14,3 +14,6 @@ venv/
 ergovision_*.png
 test_figure.png
 *.bak
+
+# Windows / Google Drive folder settings
+desktop.ini

@@ -38,7 +38,7 @@ async function api(path, opts = {}) {
   else if (opts.body !== undefined) { init.headers['Content-Type'] = 'application/json'; init.body = JSON.stringify(opts.body); }
   const r = await fetch(API + path, init);
   const data = await r.json().catch(() => ({}));
-  if (!r.ok) throw Object.assign(new Error(data.error || ('HTTP ' + r.status)), { code: data.code, status: r.status });
+  if (!r.ok) throw Object.assign(new Error(data.error || ('HTTP ' + r.status)), { code: data.code, status: r.status, data });
   return data;
 }
 let toastTimer = null;
@@ -393,28 +393,30 @@ const compHeat = (rula, reba, k) => { const r = rula && rula.components[k], b = 
 const cssHeat = t => t > 0.65 ? '#ff6b6b' : t > 0.3 ? '#ffc53d' : '#4ade80';
 const levelColour = lvl => lvl >= 3 ? '#ff6b6b' : lvl >= 2 ? '#ffc53d' : '#4ade80';
 const COMPONENT_ROWS = [['upper_arm', 'Upper arm'], ['lower_arm', 'Lower arm'], ['wrist', 'Wrist'], ['wrist_twist', 'Wrist twist'], ['neck', 'Neck'], ['trunk', 'Trunk'], ['legs', 'Legs']];
+/* [label, value, reference line, key of the measurement in a multi-photo result's `sources`] */
 const ANGLE_ROWS = [
-  ['Trunk flexion', a => a.trunk_flexion, 'vertical (+ forward)'], ['Trunk side bend', a => a.trunk_side_bend, 'frontal plane'], ['Trunk twist', a => a.trunk_twist, 'shoulders vs hips'],
-  ['Neck flexion', a => a.neck_flexion, 'trunk axis (+ forward)'], ['Neck twist', a => a.neck_twist, 'head vs shoulders'],
-  ['Upper arm flexion', (a, s) => a[s].upper_arm_flexion, 'trunk axis, sagittal'], ['Upper arm abduction', (a, s) => a[s].upper_arm_abduction, 'out of sagittal plane'],
-  ['Elbow flexion', (a, s) => a[s].elbow_flexion, '0 = straight arm'], ['Wrist flexion', (a, s) => a[s].wrist_flexion, 'forearm (+ palmar)'], ['Wrist deviation', (a, s) => a[s].wrist_deviation, 'radial / ulnar'],
-  ['Hip flexion', (a, s) => a[s + '_hip_flexion'], 'thigh vs trunk'], ['Knee flexion (L / R)', a => null, ''],
+  ['Trunk flexion', a => a.trunk_flexion, 'vertical (+ forward)', () => 'trunk_flexion'], ['Trunk side bend', a => a.trunk_side_bend, 'frontal plane', () => 'trunk_side_bend'], ['Trunk twist', a => a.trunk_twist, 'shoulders vs hips', () => 'trunk_twist'],
+  ['Neck flexion', a => a.neck_flexion, 'trunk axis (+ forward)', () => 'neck_flexion'], ['Neck twist', a => a.neck_twist, 'head vs shoulders', () => 'neck_twist'],
+  ['Upper arm flexion', (a, s) => a[s].upper_arm_flexion, 'trunk axis, sagittal', s => s + '.upper_arm_flexion'], ['Upper arm abduction', (a, s) => a[s].upper_arm_abduction, 'out of sagittal plane', s => s + '.upper_arm_abduction'],
+  ['Elbow flexion', (a, s) => a[s].elbow_flexion, '0 = straight arm', s => s + '.elbow_flexion'], ['Wrist flexion', (a, s) => a[s].wrist_flexion, 'forearm (+ palmar)', s => s + '.wrist_flexion'], ['Wrist deviation', (a, s) => a[s].wrist_deviation, 'radial / ulnar', s => s + '.wrist_deviation'],
+  ['Hip flexion', (a, s) => a[s + '_hip_flexion'], 'thigh vs trunk', s => s + '_knee_flexion'], ['Knee flexion (L / R)', a => null, '', () => null],
 ];
 
 /* ── the six body areas the manager reads, in head-to-toe order ─────────── */
 const AREAS = [
   { key: 'neck', label: 'Neck and head', comp: 'neck', ideal: 'under 10° forward',
-    angle: a => a.neck_flexion, unit: '°' },
+    angle: a => a.neck_flexion, unit: '°', src: () => 'neck_flexion' },
   { key: 'trunk', label: 'Back', comp: 'trunk', ideal: 'upright, under 20° forward',
-    angle: a => a.trunk_flexion, unit: '°' },
+    angle: a => a.trunk_flexion, unit: '°', src: () => 'trunk_flexion' },
   { key: 'shoulder', label: 'Shoulder and upper arm', comp: 'upper_arm', ideal: 'under 20° from the body',
-    angle: (a, s) => a[s].upper_arm_flexion, unit: '°' },
+    angle: (a, s) => a[s].upper_arm_flexion, unit: '°', src: s => s + '.upper_arm_flexion' },
   { key: 'elbow', label: 'Elbow and forearm', comp: 'lower_arm', ideal: 'bent 60–100°',
-    angle: (a, s) => a[s].elbow_flexion, unit: '°' },
+    angle: (a, s) => a[s].elbow_flexion, unit: '°', src: s => s + '.elbow_flexion' },
   { key: 'wrist', label: 'Wrist and hand', comp: 'wrist', ideal: 'straight, within 15°',
-    angle: (a, s) => a[s].wrist_flexion, unit: '°' },
+    angle: (a, s) => a[s].wrist_flexion, unit: '°', src: s => s + '.wrist_flexion' },
   { key: 'legs', label: 'Legs and feet', comp: 'legs', ideal: 'straight, weight on both feet',
-    angle: a => Math.max(num(a.left_knee_flexion), num(a.right_knee_flexion)), unit: '°' },
+    angle: a => (a.left_knee_flexion === null && a.right_knee_flexion === null) ? null : Math.max(num(a.left_knee_flexion), num(a.right_knee_flexion)), unit: '°',
+    src: (s, a) => (a.right_knee_flexion === null || num(a.left_knee_flexion) >= num(a.right_knee_flexion)) ? 'left_knee_flexion' : 'right_knee_flexion' },
 ];
 const heatLevel = t => t > 0.65 ? 3 : t > 0.3 ? 2 : t > 0 ? 1 : 0;
 
@@ -437,10 +439,16 @@ function recommendTools(result, modifiers) {
   if (!out.length) add('fit', 'check the bench height and reach against the worker’s size');
   return out;
 }
+/* "≥" when a joint was not visible: it was counted at its lowest band, so the score is a minimum. */
+const atLeast = r => r.is_minimum ? '≥' : '';
+/* Where a multi-photo angle came from, e.g. "photo 1, side view"; '' for one photo. */
+const srcText = (data, key) => { const s = key && data.sources && data.sources[key]; return s ? 'photo ' + s.photo + ', ' + s.view + ' view' : ''; };
+const hiddenJoint = (data, key) => (data.missing_joints || []).find(m => m.key === key);
+
 function verdictLine(rula, reba) {
   const level = Math.max(rula.action_level, reba.risk_level);
   const worst = rula.action_level >= reba.risk_level
-    ? 'RULA ' + rula.grand_score + ' of 7' : 'REBA ' + reba.reba_score + ' of 15';
+    ? 'RULA ' + atLeast(rula) + rula.grand_score + ' of 7' : 'REBA ' + atLeast(reba) + reba.reba_score + ' of 15';
   const text = ['Posture is fine as it is.', 'Acceptable. Improve it if the change is cheap.',
     'Change this workstation. Plan it.', 'Change this workstation soon.', 'Stop and redesign this task now.'][level];
   return { level, text, worst };
@@ -453,7 +461,7 @@ async function viewLab() {
     <div class="lab-bar">
       <div><div class="eyebrow">Posture lab</div><div class="lab-title" id="lab-title">Loading…</div></div>
       <div class="lab-actions">
-        <button class="btn primary" id="up-img">⇪ Upload photo</button>
+        <button class="btn primary" id="up-img" title="One photo, or 2–3 of the same worker and task (side, front, angled)">⇪ Upload photos</button>
         <button class="btn" id="up-vid">▶ Video clip</button>
         <button class="btn" id="lab-save">Save to register</button>
       </div>
@@ -466,7 +474,7 @@ async function viewLab() {
         <div class="demo-strip glass" id="demo-strip"></div>
         <div class="chip glass" id="chip" hidden><span class="name" id="chip-name"></span><span class="sub" id="chip-sub"></span></div>
       </div>
-      <div class="frame-card glass" id="frame-card" hidden><img id="frame-img" alt="Analysed frame"><div class="cap" id="frame-cap">Source frame</div></div>
+      <div class="frame-card glass" id="frame-card" hidden><img id="frame-img" alt="Analysed frame"><div class="cap" id="frame-cap">Source frame</div><div class="photo-tabs" id="photo-tabs"></div></div>
       <div class="stage-hint glass"><kbd>drag</kbd> turn · <kbd>scroll</kbd> zoom · <kbd>click</kbd> a body part to jump to its fix</div>
     </div>
     <div id="lab-status" style="margin-top:12px"></div>
@@ -491,7 +499,7 @@ async function viewLab() {
 
     <details class="card fold" style="margin-top:18px"><summary><span class="card-t">Measured angles and the worksheet arithmetic</span><span class="band" id="angle-side"></span></summary>
       <div class="grid g2" style="margin-top:12px">
-        <table class="tbl"><thead><tr><th>Joint</th><th class="num">Angle</th><th>Measured from</th></tr></thead><tbody id="angle-rows"></tbody></table>
+        <table class="tbl"><thead><tr><th>Joint</th><th class="num">Angle</th><th>Measured from</th><th id="angle-src-h" hidden>Photo</th></tr></thead><tbody id="angle-rows"></tbody></table>
         <div><table class="tbl"><thead><tr><th>Worksheet row</th><th class="num">Angle</th><th>Band</th><th class="num">RULA</th><th class="num">REBA</th></tr></thead><tbody id="component-rows"></tbody></table>
           <div class="mono muted" id="table-math" style="margin-top:10px;line-height:1.9;font-size:11.5px"></div>
           <div class="muted" id="view-kv" style="margin-top:8px;font-family:var(--mono);font-size:11px"></div></div>
@@ -509,17 +517,26 @@ async function viewLab() {
   };
   $('#demo-strip').innerHTML = DEMOS.map((d, i) => '<button data-i="' + i + '">' + esc(d.name) + '</button>').join('');
   $$('#demo-strip button').forEach(b => b.addEventListener('click', () => { clearTimeout(L.timer); showDemo(+b.dataset.i); }));
-  $('#up-img').addEventListener('click', () => pickFile('image/*'));
+  $('#up-img').addEventListener('click', () => pickFile('image/*', true));
   $('#up-vid').addEventListener('click', () => pickFile('video/*'));
   $('#lab-save').addEventListener('click', () => { if (L.result) saveDialog(postureRecords(L.result)); });
   const stage = $('#stage');
   stage.addEventListener('dragover', ev => ev.preventDefault());
-  stage.addEventListener('drop', ev => { ev.preventDefault(); const f = ev.dataTransfer.files[0]; if (f) analyse(f); });
+  stage.addEventListener('drop', ev => { ev.preventDefault(); analyseFiles([...ev.dataTransfer.files]); });
   buildMods();
   if (L.result && !L.demo) labRender(L.result); else showDemo(L.demoIndex);
 }
 
-function pickFile(accept) { const inp = $('#file'); inp.accept = accept; inp.value = ''; inp.onchange = () => { const f = inp.files[0]; if (f) analyse(f); }; inp.click(); }
+function pickFile(accept, multiple) { const inp = $('#file'); inp.accept = accept; inp.multiple = !!multiple; inp.value = ''; inp.onchange = () => analyseFiles([...inp.files]); inp.click(); }
+/* One file keeps the original single-photo / video path; 2–3 photos are one combined assessment. */
+const MAX_PHOTOS = 3;
+function analyseFiles(files) {
+  if (!files.length) return;
+  if (files.length === 1) return analyse(files[0]);
+  if (files.some(f => /^video\//.test(f.type) || VIDEO_EXT.test(f.name))) return labStatus('<strong>Upload one video at a time.</strong> Several files are for photos of the same task.', 'err');
+  if (files.length > MAX_PHOTOS) return labStatus('<strong>' + files.length + ' photos selected — use at most ' + MAX_PHOTOS + '</strong> of the same worker doing the same task: one from the side, one from the front, one angled.', 'err');
+  analyseMulti(files);
+}
 function buildMods() {
   const host = $('#mods'); host.innerHTML = '';
   for (const spec of MOD_SPEC) {
@@ -544,27 +561,66 @@ async function showDemo(i) {
 function labStatus(html, kind) { $('#lab-status').innerHTML = html ? '<div class="note ' + (kind || 'info') + '">' + html + '</div>' : ''; }
 const VIDEO_EXT = /\.(mp4|m4v|mov|avi|mkv|webm|3gp|wmv|mpg|mpeg)$/i;
 const MAX_UPLOAD_MB = 256;
-async function analyse(file) {
+async function analyse(file, person) {
   const L = state.lab, isVideo = /^video\//.test(file.type) || VIDEO_EXT.test(file.name);
   if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
     labStatus('<strong>That file is ' + Math.round(file.size / 1048576) + ' MB — the limit is ' + MAX_UPLOAD_MB + ' MB.</strong> Trim the clip to the task, or record at 1080p.', 'err');
     return;
   }
+  beginUpload(file.name, isVideo ? 'sampling frames' : 'detecting pose', isVideo);
+  labStatus('<span class="spinner"></span>&nbsp; ' + (isVideo ? 'Scoring every sampled frame…' : 'Detecting the pose and scoring…'));
+  const body = new FormData(); body.append(isVideo ? 'video' : 'image', file); body.append('options', JSON.stringify(L.modifiers));
+  if (person) body.append('person', JSON.stringify(person));
+  try {
+    const data = await api(isVideo ? '/analyze-video' : '/analyze', { body });
+    labStatus(''); L.angles = data.angles; L.flags = data.flags;
+    const who = data.person && data.person.people_found > 1 ? ' · chosen worker of ' + data.person.people_found + ' people' : '';
+    $('#chip-sub').textContent = (isVideo ? data.frames_sampled + ' frames · worst at ' + data.worst_frame_time_s + ' s' : data.image.width + '×' + data.image.height + ' · ' + data.view.view + ' view') + who;
+    labRender(data);
+    $('#lab-summary').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  } catch (e) {
+    if (e.code === 'choose_person') return choosePerson(e.data, file, isVideo);
+    labStatus('<strong>' + esc(e.message) + '</strong>' + (e.code === 'pose_backend' ? '<div style="margin-top:6px">Run <code>python download_model.py</code> once, then retry.</div>' : ''), 'err');
+    $('#chip-sub').textContent = 'failed';
+  }
+}
+/* Several people in the frame: show them numbered, and score only the one clicked. */
+function choosePerson(data, file, isVideo) {
+  labStatus(esc(data.error) + ' Click the worker on the ' + (isVideo ? 'frame' : 'photo') + '.', 'info');
+  $('#chip-sub').textContent = data.people.length + ' people — choose the worker';
+  modal(`<div class="card-h"><span class="card-t">${data.people.length} people found — click the worker to assess</span>
+      ${isVideo ? '<span class="band">frame at ' + data.time_s + ' s</span>' : ''}</div>
+    <div class="chooser"><img src="${data.preview}" alt="The uploaded ${isVideo ? 'frame' : 'photo'}">
+      ${data.people.map(p => `<button class="pick" data-n="${p.number}" style="left:${p.box[0] * 100}%;top:${p.box[1] * 100}%;width:${(p.box[2] - p.box[0]) * 100}%;height:${(p.box[3] - p.box[1]) * 100}%"><span>Worker ${p.number}</span></button>`).join('')}</div>
+    <p class="muted" style="margin:10px 0 0;font-size:12px">Only the worker you click is scored${isVideo ? ', and that same person is followed through the clip' : ''}.</p>`);
+  $$('#modal-card .pick').forEach(b => b.addEventListener('click', () => {
+    closeModal();
+    analyse(file, data.people[+b.dataset.n - 1].box);
+  }));
+}
+function beginUpload(name, sub, isVideo) {
+  const L = state.lab;
   clearTimeout(L.timer);
   /* The demo poses carry their own task details (12 kg, poor grip, repeated…).
      A real upload must start from a clean sheet, or the demo's load is scored
      against the worker in the photo. */
   if (L.demo) { L.modifiers = {}; buildMods(); }
-  L.demo = false; L.isVideo = isVideo;
+  L.demo = false; L.isVideo = isVideo; L.photoShown = null;
   $('#lab-summary').innerHTML = '';
   $$('#demo-strip button').forEach(b => b.classList.remove('on'));
-  $('#chip').hidden = false; $('#chip-name').textContent = file.name; $('#chip-sub').textContent = (isVideo ? 'sampling frames' : 'detecting pose');
-  labStatus('<span class="spinner"></span>&nbsp; ' + (isVideo ? 'Scoring every sampled frame…' : 'Detecting the pose and scoring…'));
-  const body = new FormData(); body.append(isVideo ? 'video' : 'image', file); body.append('options', JSON.stringify(L.modifiers));
+  $('#chip').hidden = false; $('#chip-name').textContent = name; $('#chip-sub').textContent = sub;
+}
+async function analyseMulti(files) {
+  const L = state.lab;
+  const big = files.find(f => f.size > MAX_UPLOAD_MB * 1024 * 1024);
+  if (big) return labStatus('<strong>' + esc(big.name) + ' is ' + Math.round(big.size / 1048576) + ' MB — the limit is ' + MAX_UPLOAD_MB + ' MB.</strong>', 'err');
+  beginUpload(files.length + ' photos of one task', 'detecting pose in each photo', false);
+  labStatus('<span class="spinner"></span>&nbsp; Detecting the pose in ' + files.length + ' photos and combining them…');
+  const body = new FormData(); for (const f of files) body.append('images', f); body.append('options', JSON.stringify(L.modifiers));
   try {
-    const data = await api(isVideo ? '/analyze-video' : '/analyze', { body });
+    const data = await api('/analyze-multi', { body });
     labStatus(''); L.angles = data.angles; L.flags = data.flags;
-    $('#chip-sub').textContent = isVideo ? data.frames_sampled + ' frames · worst at ' + data.worst_frame_time_s + ' s' : data.image.width + '×' + data.image.height + ' · ' + data.view.view + ' view';
+    $('#chip-sub').textContent = data.photos.map(p => 'photo ' + p.index + ' ' + p.view.view).join(' · ');
     labRender(data);
     $('#lab-summary').scrollIntoView({ behavior: 'smooth', block: 'start' });
   } catch (e) {
@@ -576,7 +632,7 @@ async function rescore(fromDemo) {
   const L = state.lab; if (!L.angles) return;
   try {
     const data = await api('/score', { body: { angles: L.angles, flags: L.flags, modifiers: L.modifiers } });
-    if (!fromDemo && L.result) for (const k of ['annotated_image', 'view', 'warnings', 'timeline', 'peak', 'image', 'worst_frame_time_s', 'frames_sampled', 'hands', 'exposure']) data[k] = L.result[k];
+    if (!fromDemo && L.result) for (const k of ['annotated_image', 'view', 'warnings', 'timeline', 'peak', 'image', 'worst_frame_time_s', 'frames_sampled', 'hands', 'exposure', 'photos', 'sources', 'missing_joints']) data[k] = L.result[k];
     labRender(data);
   } catch (e) {
     if (state.twin) { state.twin.setPose(L.angles, 'left'); state.twin.setHeat({}); }
@@ -611,13 +667,29 @@ function labRender(data) {
   /* three scores */
   const rc = $('#rula-card'), bc = $('#reba-card'), oc = $('#owas-card');
   rc.style.setProperty('--c', levelColour(rula.action_level)); bc.style.setProperty('--c', levelColour(reba.risk_level)); oc.style.setProperty('--c', bandColour(owas.band.level));
-  $('#rula-n').textContent = rula.grand_score; $('#reba-n').textContent = reba.reba_score; $('#owas-n').textContent = owas.score;
+  $('#rula-n').textContent = atLeast(rula) + rula.grand_score; $('#reba-n').textContent = atLeast(reba) + reba.reba_score; $('#owas-n').textContent = owas.score;
   $('#rula-act').textContent = rula.action; $('#reba-act').textContent = reba.action; $('#owas-act').textContent = owas.band.action;
-  $('#warnings').innerHTML = (data.warnings || []).map(w => '<div class="note warn" style="margin-top:6px">' + esc(w) + '</div>').join('');
+  const hidden = data.missing_joints || [];
+  $('#warnings').innerHTML = hidden.map(m => '<div class="note err" style="margin-top:6px">⚠ ' + esc(m.message) + '</div>').join('')
+    + (hidden.length ? '<div class="note info" style="margin-top:6px">Hidden joints are counted at their lowest band, so RULA and REBA are <b>minimum</b> scores (shown with ≥) until a photo shows them.</div>' : '')
+    + (data.warnings || []).map(w => '<div class="note warn" style="margin-top:6px">' + esc(w) + '</div>').join('');
 
-  /* source frame + clip timeline */
-  const fc = $('#frame-card');
-  if (data.annotated_image) { $('#frame-img').src = data.annotated_image; $('#frame-cap').textContent = data.worst_frame_time_s !== undefined ? 'worst frame · ' + data.worst_frame_time_s + ' s' : 'analysed frame'; fc.hidden = false; } else fc.hidden = true;
+  /* source frame (one tab per photo when several were combined) + clip timeline */
+  const fc = $('#frame-card'), photos = (data.photos || []).filter(p => p.annotated_image);
+  if (photos.length > 1) {
+    const show = idx => {
+      const p = photos.find(q => q.index === idx) || photos[0]; L.photoShown = p.index;
+      $('#frame-img').src = p.annotated_image;
+      $('#frame-cap').textContent = 'photo ' + p.index + ' · ' + p.view.view + ' view · ' + p.used_for.length + (p.used_for.length === 1 ? ' angle' : ' angles') + ' used';
+      $$('#photo-tabs button').forEach(b => b.classList.toggle('on', +b.dataset.i === p.index));
+    };
+    $('#photo-tabs').innerHTML = photos.map(p => '<button data-i="' + p.index + '" title="' + esc(p.view.view) + ' view">' + p.index + '</button>').join('');
+    $$('#photo-tabs button').forEach(b => b.addEventListener('click', () => show(+b.dataset.i)));
+    show(L.photoShown || (data.sources.trunk_flexion || {}).photo); fc.hidden = false;
+  } else {
+    $('#photo-tabs').innerHTML = '';
+    if (data.annotated_image) { $('#frame-img').src = data.annotated_image; $('#frame-cap').textContent = data.worst_frame_time_s !== undefined ? 'worst frame · ' + data.worst_frame_time_s + ' s' : 'analysed frame'; fc.hidden = false; } else fc.hidden = true;
+  }
   const tc = $('#timeline-card');
   if (data.timeline && data.timeline.length > 1) {
     tc.hidden = false; const T = data.timeline, W = 600, H = 64;
@@ -629,14 +701,14 @@ function labRender(data) {
   /* what to change, head to toe: one card per body area, worst first */
   const { byArea, cards } = areaCards(data);
   const extras = ['load', 'organisation'].flatMap(k => byArea[k] || []);
-  $('#areas').innerHTML = cards.map(({ area, lvl, deg, fixes }) => `
-    <div class="area" id="area-${area.key}" style="--c:${bandColour(lvl)}">
+  $('#areas').innerHTML = cards.map(({ area, lvl, deg, fixes, src, gone }) => `
+    <div class="area" id="area-${area.key}" style="--c:${bandColour(gone ? 0 : lvl)}">
       <div class="area-head">
         <div><div class="area-name">${esc(area.label)}</div>
-          <div class="area-angle">${fmtDeg(deg)} <span class="muted">· target ${esc(area.ideal)}</span></div></div>
-        ${bandPill(lvl, lvl === 0 ? 'fine' : BANDS[lvl][0])}
+          <div class="area-angle">${gone ? '<span class="area-hidden">⚠ not visible in any photo</span>' : fmtDeg(deg) + (src ? ' <span class="muted">— from ' + esc(src) + '</span>' : '')} <span class="muted">· target ${esc(area.ideal)}</span></div></div>
+        ${gone ? bandPill(0, 'not scored') : bandPill(lvl, lvl === 0 ? 'fine' : BANDS[lvl][0])}
       </div>
-      ${fixes.length
+      ${gone ? '<div class="area-ok">Upload another photo that shows this joint to score it.</div>' : fixes.length
         ? '<ul class="area-fixes">' + fixes.flatMap(f => f.actions.slice(0, 2)).slice(0, 3).map(a => '<li>' + esc(a) + '</li>').join('') + '</ul>'
           + '<div class="area-why">' + esc(fixes[0].why) + '</div>'
         : '<div class="area-ok">In the acceptable band — nothing to change here.</div>'}
@@ -661,9 +733,13 @@ function labRender(data) {
   $('#mods-note').textContent = [L.modifiers.load_kg ? L.modifiers.load_kg + ' kg load' : 'no load set',
     L.modifiers.static_posture ? 'held over a minute' : null, L.modifiers.repeated_actions ? 'repeated' : null,
     L.modifiers.sitting ? 'seated' : null].filter(Boolean).join(' · ');
-  $('#angle-rows').innerHTML = ANGLE_ROWS.map(([label, get, ref]) => label.startsWith('Knee')
-    ? '<tr><td>' + label + '</td><td class="num">' + fmtDeg(data.angles.left_knee_flexion) + ' / ' + fmtDeg(data.angles.right_knee_flexion) + '</td><td class="band">0 = straight leg</td></tr>'
-    : '<tr><td>' + label + '</td><td class="num">' + fmtDeg(get(data.angles, side)) + '</td><td class="band">' + ref + '</td></tr>').join('');
+  const multi = !!data.sources;
+  $('#angle-src-h').hidden = !multi;
+  const srcCell = key => multi ? '<td class="band">' + (hiddenJoint(data, key) ? '<span class="area-hidden">not visible</span>' : esc(srcText(data, key) || '—')) + '</td>' : '';
+  $('#angle-rows').innerHTML = ANGLE_ROWS.map(([label, get, ref, key]) => label.startsWith('Knee')
+    ? '<tr><td>' + label + '</td><td class="num">' + fmtDeg(data.angles.left_knee_flexion) + ' / ' + fmtDeg(data.angles.right_knee_flexion) + '</td><td class="band">0 = straight leg</td>'
+      + (multi ? '<td class="band">' + ['left', 'right'].map(s => hiddenJoint(data, s + '_knee_flexion') ? 'not visible' : (srcText(data, s + '_knee_flexion') || '—').replace(', ', ' ')).join(' / ') + '</td>' : '') + '</tr>'
+    : '<tr><td>' + label + '</td><td class="num">' + fmtDeg(get(data.angles, side)) + '</td><td class="band">' + ref + '</td>' + srcCell(key(side)) + '</tr>').join('');
   $('#component-rows').innerHTML = COMPONENT_ROWS.map(([k, label]) => {
     const r = rula.components[k], b = reba.components[k], c = r || b; if (!c) return '';
     const adj = (c.adjustments || []).map(a => ' <span class="band">(' + (a.delta > 0 ? '+' : '') + a.delta + ' ' + esc(a.label) + ')</span>').join('');
@@ -683,8 +759,9 @@ function areaCards(data) {
     const t = compHeat(rula, reba, area.comp), lvl = heatLevel(t);
     const deg = area.angle(data.angles, side);
     const fixes = byArea[area.key] || [];
-    return { area, lvl, deg, fixes };
-  }).sort((a, b) => b.lvl - a.lvl || (b.deg || 0) - (a.deg || 0));
+    const key = area.src(side, data.angles);
+    return { area, lvl, deg, fixes, src: srcText(data, key), gone: deg === null && !!hiddenJoint(data, key) };
+  }).sort((a, b) => b.gone - a.gone || b.lvl - a.lvl || (b.deg || 0) - (a.deg || 0));
   return { byArea, cards };
 }
 
@@ -699,7 +776,7 @@ const LEVEL_TODO = [
 ];
 function summaryRender(data, cards, v) {
   const L = state.lab, level = v.level, owas = data.owas;
-  const main = level >= 2 ? cards.find(c => c.lvl >= 2) : null;
+  const main = level >= 2 ? cards.find(c => c.lvl >= 2 && !c.gone) : null;
   const reason = main
     ? '<b>Main reason:</b> ' + esc(main.area.label.toLowerCase()) + ' at ' + fmtDeg(Math.abs(main.deg)) + ' — the safe range is ' + esc(main.area.ideal) + '.'
     : level >= 2 ? 'The score comes from the task details — load, grip or repetition — more than from one body angle.'
@@ -732,8 +809,9 @@ function summaryRender(data, cards, v) {
         <p class="sum-reason">${reason}</p>
         ${fixes.length && level >= 1 ? '<div class="sum-fix-t">' + (level >= 2 ? 'What to do' : 'Optional improvements') + '</div><ol class="sum-fixes">' + fixes.map(a => '<li>' + esc(a) + '</li>').join('') + '</ol>' : ''}
         ${clip}
+        ${(data.missing_joints || []).length ? '<div class="sum-note sum-hidden">⚠ Not visible in any photo: ' + esc(data.missing_joints.map(j => j.joint.toLowerCase()).join(', ')) + '. These are counted at their lowest band, so the real risk may be higher — add a photo that shows them.</div>' : ''}
         ${hidden ? '<div class="sum-note">Posture only. The ' + (data.timeline ? 'video' : 'photo') + ' cannot show the weight carried or how often the move repeats — add them under <b>Task details the camera cannot see</b> for the full score.</div>' : ''}
-        <details class="sum-how"><summary>Scores: RULA ${data.rula.grand_score}/7 · REBA ${data.reba.reba_score}/15 · OWAS ${owas.score}/4 — how is this worked out?</summary>
+        <details class="sum-how"><summary>Scores: RULA ${atLeast(data.rula)}${data.rula.grand_score}/7 · REBA ${atLeast(data.reba)}${data.reba.reba_score}/15 · OWAS ${owas.score}/4 — how is this worked out?</summary>
           <p>We find 33 points on the body and measure the angle of each joint. Two standard checklists score those angles: <b>RULA</b> (arms, neck and back) and <b>REBA</b> (whole body). Each is turned into the same 0–4 risk level, and <b>the higher one is your risk level</b> — a risk is never averaged away. <b>OWAS</b> (back, arms, legs and load) is shown as a second opinion.${data.timeline ? ' For a video we check one moment every ' + (x ? x.seconds_per_sample : 0.5) + ' s across the whole clip; the worst moment sets the level, and the bar shows how long the worker spent at each level.' : ''} Full arithmetic is under “Measured angles and the worksheet arithmetic” below.</p>
         </details>
       </div>

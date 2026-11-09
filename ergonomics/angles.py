@@ -242,9 +242,11 @@ def detect_flags(angles, frame):
 
     knees = [angles.left_knee_flexion, angles.right_knee_flexion]
     knee_gap = abs(knees[0] - knees[1]) if not any(np.isnan(k) for k in knees) else 0.0
-    hips = [angles.left_hip_flexion, angles.right_hip_flexion]
-    max_hip = max(h for h in hips if not np.isnan(h)) if hips else float("nan")
-    max_knee = max(k for k in knees if not np.isnan(k)) if knees else float("nan")
+    # A joint hidden in every photo arrives as NaN (multi-photo merge).
+    hips = [h for h in (angles.left_hip_flexion, angles.right_hip_flexion) if not np.isnan(h)]
+    seen_knees = [k for k in knees if not np.isnan(k)]
+    max_hip = max(hips) if hips else float("nan")
+    max_knee = max(seen_knees) if seen_knees else float("nan")
 
     flags = {
         "trunk_twisted": big(angles.trunk_twist, TWIST_DEG),

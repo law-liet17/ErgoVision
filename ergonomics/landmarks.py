@@ -63,6 +63,8 @@ class Frame:
     width: int = 0
     height: int = 0
     has_world: bool = False
+    box: list = None      # normalised [x0, y0, x1, y1] around the body
+    people: int = 1       # people detected in the image this body came from
 
     # --- point access -----------------------------------------------------
     def p(self, name):

@@ -17,9 +17,11 @@ Modules:
     reba       - REBA tables and scoring
     insights   - scores -> workspace recommendations
     analysis   - the end-to-end pipeline and image overlay
+    multiview  - 1-3 photos of one task -> one assessment, angle by angle
 """
 
 from .analysis import (
+    MultiplePeople,
     NoPoseDetected,
     analyse_image,
     angles_from_dict,
@@ -27,6 +29,7 @@ from .analysis import (
     score_angles,
 )
 from .angles import PostureAngles, compute_angles
+from .multiview import analyse_views
 from .pose_backend import PoseBackendUnavailable, backend_info
 from .schema import Modifiers
 
@@ -35,8 +38,10 @@ __all__ = [
     "PoseBackendUnavailable",
     "backend_info",
     "PostureAngles",
+    "MultiplePeople",
     "NoPoseDetected",
     "analyse_image",
+    "analyse_views",
     "angles_from_dict",
     "compute_angles",
     "decode_image",

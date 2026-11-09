@@ -11,7 +11,7 @@ they can be eyeballed against a printed worksheet. Nothing is computed from a
 formula - a chart lookup is a chart lookup.
 """
 
-from .schema import Component, build_component, clamp
+from .schema import Component, build_component, clamp, missing_rows, score_or_floor
 
 # --- Table A -------------------------------------------------------------
 # Key: (upper arm score, lower arm score).
@@ -271,13 +271,14 @@ def score_side(angles, modifiers, side):
     ctx = modifiers.resolved(angles.flags, side)
     arm = angles.side(side)
 
-    upper_arm = upper_arm_component(arm.upper_arm_flexion, ctx)
-    lower_arm = lower_arm_component(arm.elbow_flexion, ctx)
-    wrist = wrist_component(arm.wrist_flexion, ctx)
+    # A joint that was not visible is scored at its lowest band (see score_or_floor).
+    upper_arm = score_or_floor(upper_arm_component, arm.upper_arm_flexion, 0.0, ctx)
+    lower_arm = score_or_floor(lower_arm_component, arm.elbow_flexion, 80.0, ctx)
+    wrist = score_or_floor(wrist_component, arm.wrist_flexion, 0.0, ctx)
     twist = wrist_twist_component(ctx)
 
-    neck = neck_component(angles.neck_flexion, ctx)
-    trunk = trunk_component(angles.trunk_flexion, ctx)
+    neck = score_or_floor(neck_component, angles.neck_flexion, 5.0, ctx)
+    trunk = score_or_floor(trunk_component, angles.trunk_flexion, 0.0, ctx)
     legs = legs_component(ctx)
 
     muscle, muscle_reasons = muscle_use_score(ctx)
@@ -335,4 +336,7 @@ def score(angles, modifiers):
     result["sides"] = {s: sides[s]["grand_score"] for s in sides}
     result["detail_by_side"] = sides
     result["governing_side"] = governing
+    # Hidden joints count at their lowest band, so the score is then a minimum.
+    result["missing_rows"] = missing_rows(sides)
+    result["is_minimum"] = bool(result["missing_rows"])
     return result

@@ -11,6 +11,7 @@ field defaults to ``None`` meaning "trust the detector", and any explicit
 ``True``/``False`` from the user overrides it.
 """
 
+import math
 from dataclasses import dataclass, field, fields
 from typing import Optional
 
@@ -143,6 +144,7 @@ class Component:
     angle: Optional[float] = None
     band: str = ""
     adjustments: list = field(default_factory=list)  # [{"label":..., "delta": +1}]
+    missing: bool = False  # joint not visible: scored at the lowest band
 
     def to_dict(self):
         return {
@@ -152,7 +154,44 @@ class Component:
             "angle": self.angle,
             "band": self.band,
             "adjustments": self.adjustments,
+            "missing": self.missing,
         }
+
+
+MISSING_BAND = "not visible - counted at the lowest band, the real score may be higher"
+
+
+def is_missing(value):
+    """True for an angle that was not measured (None from JSON, NaN from the engine)."""
+    return value is None or (isinstance(value, float) and math.isnan(value))
+
+
+def score_or_floor(component_fn, value, floor, *args):
+    """Score a measured angle, or - when the joint was not visible - the lowest band.
+
+    A hidden joint must not be scored as if it were measured: ``floor`` is an
+    angle inside the component's lowest band, the row is marked ``missing``, and
+    the worksheet total therefore becomes a minimum rather than a guess.
+    """
+    if not is_missing(value):
+        return component_fn(value, *args)
+    comp = component_fn(floor, *args)
+    comp.angle = None
+    comp.missing = True
+    comp.band = MISSING_BAND
+    return comp
+
+
+def missing_rows(sides):
+    """Worksheet rows that were not visible, from a ``{side: score_side()}`` dict."""
+    rows = []
+    for side, result in sides.items():
+        for name, comp in result["components"].items():
+            if comp.get("missing"):
+                label = name if name in ("neck", "trunk", "legs") else "%s (%s)" % (name, side)
+                if label not in rows:
+                    rows.append(label)
+    return rows
 
 
 def clamp(value, low, high):

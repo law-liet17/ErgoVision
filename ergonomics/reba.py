@@ -8,7 +8,7 @@ Same transcription approach as :mod:`.rula`: the tables are the printed
 worksheet, written out so they can be checked by eye.
 """
 
-from .schema import build_component, clamp
+from .schema import MISSING_BAND, build_component, clamp, is_missing, missing_rows, score_or_floor
 
 # --- Table A -------------------------------------------------------------
 # Key: (neck score 1..3, trunk score 1..5). Values: legs 1..4.
@@ -268,16 +268,21 @@ def score_side(angles, modifiers, side):
     ctx = modifiers.resolved(angles.flags, side)
     arm = angles.side(side)
 
-    knees = [k for k in (angles.left_knee_flexion, angles.right_knee_flexion) if k is not None]
+    knees = [k for k in (angles.left_knee_flexion, angles.right_knee_flexion) if not is_missing(k)]
     worst_knee = max(knees) if knees else 0.0
 
-    neck = neck_component(angles.neck_flexion, ctx)
-    trunk = trunk_component(angles.trunk_flexion, ctx)
+    # A joint that was not visible is scored at its lowest band (see score_or_floor).
+    neck = score_or_floor(neck_component, angles.neck_flexion, 10.0, ctx)
+    trunk = score_or_floor(trunk_component, angles.trunk_flexion, 0.0, ctx)
     legs = legs_component(worst_knee, ctx)
+    if len(knees) < 2:  # a hidden knee may be the more bent one
+        legs.missing = True
+        if not knees:
+            legs.angle, legs.band = None, MISSING_BAND
 
-    upper_arm = upper_arm_component(arm.upper_arm_flexion, ctx)
-    lower_arm = lower_arm_component(arm.elbow_flexion)
-    wrist = wrist_component(arm.wrist_flexion, ctx)
+    upper_arm = score_or_floor(upper_arm_component, arm.upper_arm_flexion, 0.0, ctx)
+    lower_arm = score_or_floor(lower_arm_component, arm.elbow_flexion, 80.0)
+    wrist = score_or_floor(wrist_component, arm.wrist_flexion, 0.0, ctx)
 
     table_a = lookup_table_a(neck.score, trunk.score, legs.score)
     force, force_band = force_score(ctx)
@@ -334,4 +339,7 @@ def score(angles, modifiers):
     result["sides"] = {s: sides[s]["reba_score"] for s in sides}
     result["detail_by_side"] = sides
     result["governing_side"] = governing
+    # Hidden joints count at their lowest band, so the score is then a minimum.
+    result["missing_rows"] = missing_rows(sides)
+    result["is_minimum"] = bool(result["missing_rows"])
     return result
