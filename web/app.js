@@ -2,6 +2,7 @@
    hash-routed single page app: dashboard, posture lab (3D), tool runners,
    risk register, actions, workstations, methodology.                          */
 import { Twin } from './twin.js';
+import { fillFor, listen, parseTaskSpeech, speechSupported } from './voice.js';
 
 const API = '';
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -268,6 +269,60 @@ function readForm(root, schema) {
   }
   return out;
 }
+/* ── voice input: say the task, check the filled form, then score ─────────── */
+function voicePanelHTML() {
+  return `<div class="voice" data-voice>
+    <div class="voice-row"><button type="button" class="btn small" data-v="mic">🎤 Speak the task</button>
+      <input type="text" class="voice-text" data-v="text" aria-label="What was said" placeholder="…or type it: twelve kg box, about twenty times a minute, grip is poor, held over a minute">
+      <button type="button" class="btn small" data-v="fill">Fill the form</button></div>
+    <div class="voice-status" data-v="status"></div>
+    <div class="voice-confirm" data-v="confirm" hidden></div>
+  </div>`;
+}
+/* Wire a voice panel to a form. `apply(values)` writes the values and pauses scoring;
+   `confirm()` scores, `discard()` puts the old values back. Voice never scores by itself. */
+function wireVoice(panel, { fields, apply, confirm, discard }) {
+  const q = s => panel.querySelector('[data-v="' + s + '"]');
+  const status = (text, kind) => { q('status').className = 'voice-status ' + (kind || ''); q('status').textContent = text; };
+  const mic = q('mic');
+  let rec = null;
+  if (!speechSupported()) { mic.disabled = true; mic.title = 'Speech input needs Chrome or Edge. Type the sentence instead.'; }
+  const fill = () => {
+    const { facts, heard } = parseTaskSpeech(q('text').value);
+    const values = fillFor(facts, fields);
+    if (!Object.keys(values).length) { status('No load, rate, grip, hold time or hours found in that. Try again, or set the fields by hand.', 'err'); return; }
+    status('');
+    apply(values);
+    const label = k => (fields.find(f => f.key === k) || {}).label || k;
+    const show = v => v === true ? 'yes' : v === false ? 'no' : v;
+    const box = q('confirm');
+    box.innerHTML = '<b>Filled from what you said.</b> Check the highlighted fields and correct anything wrong — nothing is scored until you confirm.'
+      + '<ul>' + Object.entries(values).map(([k, v]) => '<li>' + esc(label(k)) + ': <b>' + esc(show(v)) + '</b></li>').join('') + '</ul>'
+      + '<div class="voice-heard">Heard: ' + Object.values(heard).map(h => '“' + esc(h) + '”').join(' · ') + '</div>'
+      + '<div class="voice-actions"><button type="button" class="btn small primary" data-v="ok">Confirm and score</button><button type="button" class="btn small ghost" data-v="undo">Discard</button></div>';
+    box.hidden = false;
+    q('ok').addEventListener('click', () => { box.hidden = true; confirm(); });
+    q('undo').addEventListener('click', () => { box.hidden = true; discard(); });
+  };
+  mic.addEventListener('click', () => {
+    if (rec) { rec.stop(); return; }
+    mic.classList.add('on'); mic.textContent = '■ Listening — tap to stop'; status('Speak now, in English.');
+    rec = listen({
+      onText: (text, final) => { q('text').value = text; if (final) fill(); },
+      onError: err => status(err === 'not-allowed' ? 'The microphone is blocked. Allow it in the browser, or type the sentence.' : 'Could not hear that (' + err + '). Try again, or type it.', 'err'),
+      onEnd: () => { rec = null; mic.classList.remove('on'); mic.textContent = '🎤 Speak the task'; },
+    });
+  });
+  q('fill').addEventListener('click', fill);
+  q('text').addEventListener('keydown', ev => { if (ev.key === 'Enter') { ev.preventDefault(); fill(); } });
+}
+/* Write one value into a tool form field (number, select or switch). */
+function setField(root, f, value) {
+  const el = root.querySelector('[data-key="' + f.key + '"]'); if (!el) return null;
+  if (f.type === 'bool') { el.classList.toggle('on', !!value); el.setAttribute('aria-checked', !!value); } else el.value = value ?? '';
+  return el.closest('.field');
+}
+
 function insightsHTML(list, ref) {
   if (!list || !list.length) return '<div class="finding"><div class="f-title">No findings</div><div class="f-body">Everything scored in its acceptable band.</div></div>';
   return list.map((f, i) => `<div class="finding" id="finding-${i}" style="--c:${SEV_COLOUR[f.severity] || SEV_COLOUR.info}">
@@ -300,19 +355,35 @@ async function viewTool(id) {
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">${valPill(schema.validation)}<button class="btn" id="reset">Reset</button><button class="btn primary" id="save">Save to register</button></div></div>
     ${Object.keys(prefill).length ? '<div class="note info" style="margin-bottom:14px">Inputs pre-filled from the posture lab. Adjust anything the camera could not see, then save.</div>' : ''}
     <div class="grid g-tool">
-      <div class="card" id="form">${schema.groups.map(g => `<div class="form-group"><div class="fg-title">${esc(g.title)}</div>${g.fields.map(f => fieldHTML(f, prefill[f.key])).join('')}</div>`).join('')}
+      <div class="card" id="form">${voicePanelHTML()}${schema.groups.map(g => `<div class="form-group"><div class="fg-title">${esc(g.title)}</div>${g.fields.map(f => fieldHTML(f, prefill[f.key])).join('')}</div>`).join('')}
         ${id === 'niosh' ? `<div class="form-group"><div class="fg-title">Multi-task job (composite lifting index)</div><div class="muted" style="line-height:1.6;margin-bottom:8px">Add each lift of the job with its own geometry and frequency; the CLI combines them the way the NIOSH manual does.</div><div id="cli-list" class="muted">No tasks added yet.</div><div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap"><button class="btn small" id="cli-add">Add current lift as a task</button><button class="btn small primary" id="cli-run" disabled>Compute CLI</button></div><div id="cli-out" style="margin-top:10px"></div></div>` : ''}
       </div>
       <div id="result"><div class="empty"><span class="spinner"></span></div></div>
     </div>`;
-  let latest = null, cliTasks = [];
+  let latest = null, cliTasks = [], voicePending = false;
   const run = debounce(async () => {
+    if (voicePending) return;   // values filled by voice wait for the user's confirmation
     const inputs = readForm($('#form'), schema);
     try { latest = await api('/api/tools/' + id, { body: { inputs } }); latest._inputs = inputs; $('#result').innerHTML = resultHTML(latest, schema); }
     catch (e) { $('#result').innerHTML = '<div class="note err">' + esc(e.message) + '</div>'; }
   }, 220);
-  $('#form').addEventListener('input', run);
-  $('#form').addEventListener('change', run);
+  const onEdit = ev => { if (!ev.target.closest('[data-voice]')) run(); };
+  $('#form').addEventListener('input', onEdit);
+  $('#form').addEventListener('change', onEdit);
+  const fields = schema.groups.flatMap(g => g.fields);
+  let before = null;
+  const endVoice = () => { voicePending = false; $('#save').disabled = false; $$('#form .voice-filled').forEach(el => el.classList.remove('voice-filled')); run(); };
+  wireVoice($('#form [data-voice]'), {
+    fields,
+    apply: values => {
+      before = readForm($('#form'), schema);
+      voicePending = true; $('#save').disabled = true;
+      for (const [key, value] of Object.entries(values)) { const box = setField($('#form'), fields.find(f => f.key === key), value); if (box) box.classList.add('voice-filled'); }
+      $('#result').innerHTML = '<div class="note info">Scoring is paused. Check the values filled from what you said, then press <b>Confirm and score</b>.</div>';
+    },
+    confirm: endVoice,
+    discard: () => { for (const f of fields) if (f.key in before) setField($('#form'), f, before[f.key]); endVoice(); },
+  });
   $('#form').addEventListener('click', ev => { const sw = ev.target.closest('.switch'); if (sw) { sw.classList.toggle('on'); sw.setAttribute('aria-checked', sw.classList.contains('on')); run(); } });
   $('#reset').addEventListener('click', () => { $('#form').querySelectorAll('[data-key]').forEach(el => { const f = schema.groups.flatMap(g => g.fields).find(x => x.key === el.dataset.key); if (!f) return; if (f.type === 'bool') el.classList.remove('on'); else el.value = f.default ?? ''; }); run(); });
   $('#save').addEventListener('click', () => { if (latest) saveDialog({ tool: id, tool_name: schema.name, inputs: latest._inputs, result: latest }); });
@@ -496,7 +567,7 @@ async function viewLab() {
     <div class="card" id="timeline-card" hidden style="margin-top:14px"><div class="card-h"><span class="card-t">Score across the clip</span><span class="band" id="timeline-note"></span></div><svg class="spark" id="spark" viewBox="0 0 600 64" preserveAspectRatio="none"></svg></div>
 
     <details class="card fold" style="margin-top:14px"><summary><span class="card-t">Task details the camera cannot see</span><span class="band" id="mods-note"></span></summary>
-      <div class="mods" id="mods"></div></details>
+      <div id="voice-lab"></div><div class="mods" id="mods"></div></details>
 
     <div class="card" style="margin-top:18px"><div class="card-h"><span class="card-t">What to change, head to toe</span><span class="band">worst area first · click a body part in the 3D view to jump here</span></div>
       <div id="areas"></div></div>
@@ -531,6 +602,21 @@ async function viewLab() {
   stage.addEventListener('dragover', ev => ev.preventDefault());
   stage.addEventListener('drop', ev => { ev.preventDefault(); analyseFiles([...ev.dataTransfer.files]); });
   buildMods();
+  $('#voice-lab').innerHTML = voicePanelHTML();
+  L.voicePending = false;   // an unconfirmed fill does not survive leaving the lab
+  const endVoice = () => { L.voicePending = false; $$('#mods .voice-filled').forEach(el => el.classList.remove('voice-filled')); rescore(L.demo); };
+  wireVoice($('#voice-lab [data-voice]'), {
+    fields: MOD_SPEC,
+    apply: values => {
+      clearTimeout(L.timer);              // a demo pose must not cycle away mid-check
+      L.voiceBefore = { ...L.modifiers }; L.voicePending = true;
+      Object.assign(L.modifiers, values); buildMods();
+      for (const key of Object.keys(values)) { const el = $('#mods [data-key="' + key + '"]'); if (el) el.classList.add('voice-filled'); }
+      $('#mods-note').textContent = 'filled by voice · waiting for you to confirm';
+    },
+    confirm: endVoice,
+    discard: () => { L.modifiers = L.voiceBefore; buildMods(); endVoice(); },
+  });
   if (L.result && !L.demo) labRender(L.result); else showDemo(L.demoIndex);
 }
 
@@ -547,7 +633,7 @@ function analyseFiles(files) {
 function buildMods() {
   const host = $('#mods'); host.innerHTML = '';
   for (const spec of MOD_SPEC) {
-    const wrap = document.createElement('label'); wrap.className = 'mod';
+    const wrap = document.createElement('label'); wrap.className = 'mod'; wrap.dataset.key = spec.key;
     const cur = state.lab.modifiers[spec.key];
     if (spec.type === 'bool') { wrap.innerHTML = '<span>' + esc(spec.label) + '</span><span class="switch' + (cur ? ' on' : '') + '"></span>'; const sw = wrap.querySelector('.switch'); wrap.addEventListener('click', ev => { ev.preventDefault(); sw.classList.toggle('on'); state.lab.modifiers[spec.key] = sw.classList.contains('on'); rescore(); }); }
     else if (spec.type === 'number') { wrap.innerHTML = '<span>' + esc(spec.label) + '</span><input type="number" min="' + spec.min + '" max="' + spec.max + '" step="' + spec.step + '" value="' + (cur ?? 0) + '">'; wrap.querySelector('input').addEventListener('change', ev => { state.lab.modifiers[spec.key] = parseFloat(ev.target.value) || 0; rescore(); }); }
@@ -636,7 +722,7 @@ async function analyseMulti(files) {
   }
 }
 async function rescore(fromDemo) {
-  const L = state.lab; if (!L.angles) return;
+  const L = state.lab; if (!L.angles || L.voicePending) return;   // voice-filled details wait for confirmation
   try {
     const data = await api('/score', { body: { angles: L.angles, flags: L.flags, modifiers: L.modifiers } });
     if (!fromDemo && L.result) for (const k of ['annotated_image', 'view', 'warnings', 'timeline', 'peak', 'image', 'worst_frame_time_s', 'frames_sampled', 'hands', 'exposure', 'photos', 'sources', 'missing_joints']) data[k] = L.result[k];
