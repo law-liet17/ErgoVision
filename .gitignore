@@ -17,3 +17,7 @@ test_figure.png
 
 # Windows / Google Drive folder settings
 desktop.ini
+
+# research benchmark: downloaded model weights and outputs
+research/weights/
+benchmark_results.csv

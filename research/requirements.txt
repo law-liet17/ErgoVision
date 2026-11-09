@@ -1,0 +1,5 @@
+# Pose-model benchmark (research/benchmark.py) - not needed by the app.
+# Install on top of the app's requirements:  pip install -r requirements.txt -r research/requirements.txt
+ultralytics>=8.3      # YOLOv8-pose (pulls in PyTorch, a large download)
+rtmlib>=0.0.16        # RTMPose whole-body, ONNX models fetched on first use
+onnxruntime>=1.20
