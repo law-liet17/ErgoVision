@@ -29,7 +29,8 @@ const SEV_COLOUR = { critical: '#ff6b6b', high: '#ff6b6b', medium: '#ffc53d', lo
 
 const state = {
   catalogue: null, tools: {}, workstations: [], prefill: {}, charts: [], twin: null,
-  lab: { angles: null, flags: null, modifiers: {}, result: null, demo: true, demoIndex: 1, timer: null },
+  lab: { angles: null, flags: null, modifiers: {}, result: null, demo: true, demoIndex: 1, timer: null,
+         markers: { on: false, colour: 'green' } },
 };
 
 /* ── infrastructure ─────────────────────────────────────────────────────── */
@@ -541,6 +542,10 @@ async function viewLab() {
       <div class="lab-actions">
         <button class="btn primary" id="up-img" title="One photo, or 2–3 of the same worker and task (side, front, angled)">⇪ Upload photos</button>
         <button class="btn" id="up-vid">▶ Video clip</button>
+        <span class="marker-mode" title="Worker wears bright stickers or tape on shoulders, elbows, wrists, hips, knees and ankles. Turn this on before uploading.">
+          <label><span class="switch${L.markers.on ? ' on' : ''}" id="mk-on" role="checkbox" aria-checked="${L.markers.on}"></span> Marker mode</label>
+          <select id="mk-colour" aria-label="Sticker colour" ${L.markers.on ? '' : 'disabled'}>${MARKER_COLOURS.map(([v, l]) => '<option value="' + v + '"' + (v === L.markers.colour ? ' selected' : '') + '>' + l + '</option>').join('')}</select>
+        </span>
         <button class="btn" id="lab-save">Save to register</button>
       </div>
     </div>
@@ -595,6 +600,13 @@ async function viewLab() {
   };
   $('#demo-strip').innerHTML = DEMOS.map((d, i) => '<button data-i="' + i + '">' + esc(d.name) + '</button>').join('');
   $$('#demo-strip button').forEach(b => b.addEventListener('click', () => { clearTimeout(L.timer); showDemo(+b.dataset.i); }));
+  $('.marker-mode label').addEventListener('click', ev => {   // the whole label, not just the switch
+    ev.preventDefault();
+    L.markers.on = !L.markers.on;
+    $('#mk-on').classList.toggle('on', L.markers.on); $('#mk-on').setAttribute('aria-checked', L.markers.on);
+    $('#mk-colour').disabled = !L.markers.on;
+  });
+  $('#mk-colour').addEventListener('change', ev => { L.markers.colour = ev.target.value; });
   $('#up-img').addEventListener('click', () => pickFile('image/*', true));
   $('#up-vid').addEventListener('click', () => pickFile('video/*'));
   $('#lab-save').addEventListener('click', () => { if (L.result) saveDialog(postureRecords(L.result)); });
@@ -663,6 +675,7 @@ async function analyse(file, person) {
   beginUpload(file.name, isVideo ? 'sampling frames' : 'detecting pose', isVideo);
   labStatus('<span class="spinner"></span>&nbsp; ' + (isVideo ? 'Scoring every sampled frame…' : 'Detecting the pose and scoring…'));
   const body = new FormData(); body.append(isVideo ? 'video' : 'image', file); body.append('options', JSON.stringify(L.modifiers));
+  if (L.markers.on) body.append('markers', L.markers.colour);
   if (person) body.append('person', JSON.stringify(person));
   try {
     const data = await api(isVideo ? '/analyze-video' : '/analyze', { body });
@@ -691,6 +704,19 @@ function choosePerson(data, file, isVideo) {
     analyse(file, data.people[+b.dataset.n - 1].box);
   }));
 }
+/* Marker mode: which joints the stickers moved, or why nothing moved. */
+const MARKER_COLOURS = [['green', 'Green tape'], ['pink', 'Pink tape'], ['yellow', 'Yellow tape'], ['orange', 'Orange tape'], ['blue', 'Blue tape']];
+function markerNote(m) {
+  if (!m) return '';
+  const colour = (MARKER_COLOURS.find(c => c[0] === m.colour) || [m.colour, m.colour])[1].toLowerCase();
+  if (!m.corrected.length) return '<div class="note warn" style="margin-top:6px"><b>Marker mode is on, but no ' + esc(colour) + ' sticker was found next to a joint</b>'
+    + (m.stickers_found ? ' (' + m.stickers_found + ' found elsewhere in the picture)' : '') + '. The pose is as the camera saw it. Check the colour setting, the lighting, and that the stickers face the camera.</div>';
+  const joints = m.corrected.map(c => c.joint.replace('_', ' ') + ' (' + Math.round(c.moved_px) + ' px' + (c.photo ? ', photo ' + c.photo : '') + ')');
+  const busy = m.colour_in_scene ? '<div class="note warn" style="margin-top:6px"><b>' + m.stickers_found + ' ' + esc(colour) + ' patches found on and around the worker</b> — that colour is probably in the clothes or the background, so some joints may have moved to the wrong spot. Use a tape colour that appears nowhere else in the picture.</div>' : '';
+  return busy + '<div class="note info" style="margin-top:6px"><b>Marker mode · ' + esc(colour) + ':</b> moved onto the stickers — ' + esc(joints.join(', ')) + '. '
+    + 'Corrected joints are ringed on the photo, with a line from where the camera had put them.'
+    + (m.stickers_unused ? ' ' + m.stickers_unused + ' sticker' + (m.stickers_unused === 1 ? ' was' : 's were') + ' not near any joint and was ignored.' : '') + '</div>';
+}
 function beginUpload(name, sub, isVideo) {
   const L = state.lab;
   clearTimeout(L.timer);
@@ -710,6 +736,7 @@ async function analyseMulti(files) {
   beginUpload(files.length + ' photos of one task', 'detecting pose in each photo', false);
   labStatus('<span class="spinner"></span>&nbsp; Detecting the pose in ' + files.length + ' photos and combining them…');
   const body = new FormData(); for (const f of files) body.append('images', f); body.append('options', JSON.stringify(L.modifiers));
+  if (L.markers.on) body.append('markers', L.markers.colour);
   try {
     const data = await api('/analyze-multi', { body });
     labStatus(''); L.angles = data.angles; L.flags = data.flags;
@@ -725,7 +752,7 @@ async function rescore(fromDemo) {
   const L = state.lab; if (!L.angles || L.voicePending) return;   // voice-filled details wait for confirmation
   try {
     const data = await api('/score', { body: { angles: L.angles, flags: L.flags, modifiers: L.modifiers } });
-    if (!fromDemo && L.result) for (const k of ['annotated_image', 'view', 'warnings', 'timeline', 'peak', 'image', 'worst_frame_time_s', 'frames_sampled', 'hands', 'exposure', 'photos', 'sources', 'missing_joints']) data[k] = L.result[k];
+    if (!fromDemo && L.result) for (const k of ['annotated_image', 'view', 'warnings', 'timeline', 'peak', 'image', 'worst_frame_time_s', 'frames_sampled', 'hands', 'exposure', 'photos', 'sources', 'missing_joints', 'markers']) data[k] = L.result[k];
     labRender(data);
   } catch (e) {
     if (state.twin) { state.twin.setPose(L.angles, 'left'); state.twin.setHeat({}); }
@@ -766,7 +793,7 @@ function labRender(data) {
     $('#' + m.id + '-act').textContent = m.label + ': ' + m.action;
   });
   const hidden = data.missing_joints || [];
-  $('#warnings').innerHTML = hidden.map(m => '<div class="note err" style="margin-top:6px">⚠ ' + esc(m.message) + '</div>').join('')
+  $('#warnings').innerHTML = markerNote(data.markers) + hidden.map(m => '<div class="note err" style="margin-top:6px">⚠ ' + esc(m.message) + '</div>').join('')
     + (hidden.length ? '<div class="note info" style="margin-top:6px">Hidden joints are counted at their lowest band, so RULA and REBA are <b>minimum</b> scores (shown with ≥) until a photo shows them.</div>' : '')
     + (data.warnings || []).map(w => '<div class="note warn" style="margin-top:6px">' + esc(w) + '</div>').join('');
 

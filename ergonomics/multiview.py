@@ -18,6 +18,7 @@ from .analysis import (MultiplePeople, NoPoseDetected, attach_hands, detect_fram
                        draw_overlay, encode_jpeg, score_angles)
 from .angles import PostureAngles, SideAngles, compute_angles, detect_flags
 from .landmarks import classify_view
+from .markers import apply_markers, draw_markers
 from .schema import Modifiers, is_missing
 
 MAX_PHOTOS = 3
@@ -165,8 +166,8 @@ def _only_from(angles, sources, index):
     return out
 
 
-def analyse_views(images, modifiers=None, annotate=True, complexity=1):
-    """Assess one worker from 1-3 BGR photos of the same task."""
+def analyse_views(images, modifiers=None, annotate=True, complexity=1, markers=None):
+    """Assess one worker from 1-3 BGR photos of the same task (``markers``: sticker colour)."""
     if not 1 <= len(images) <= MAX_PHOTOS:
         raise ValueError("Send between 1 and %d photos of the same worker and task." % MAX_PHOTOS)
     modifiers = modifiers or Modifiers()
@@ -183,7 +184,8 @@ def analyse_views(images, modifiers=None, annotate=True, complexity=1):
             frame = max(many.frames, key=lambda f: (f.box[2] - f.box[0]) * (f.box[3] - f.box[1]))
             warnings.append("Photo %d: %d people found - the largest one was assessed. Crop the "
                             "photo to the worker if that is not them." % (index, len(many.frames)))
-        photos.append({"index": index, "image": image, "frame": frame,
+        report = apply_markers(image, frame, markers) if markers else None   # before any angle
+        photos.append({"index": index, "image": image, "frame": frame, "markers": report,
                        "angles": compute_angles(frame), "view": classify_view(frame)})
     if not photos:
         raise NoPoseDetected("No body detected in any of the photos. Use photos where the "
@@ -209,6 +211,16 @@ def analyse_views(images, modifiers=None, annotate=True, complexity=1):
     payload["sources"] = sources
     payload["missing_joints"] = missing
 
+    if markers:
+        reports = [p for p in photos if p["markers"]]
+        payload["markers"] = {
+            "colour": markers,
+            "stickers_found": sum(p["markers"]["stickers_found"] for p in reports),
+            "stickers_unused": sum(p["markers"]["stickers_unused"] for p in reports),
+            "corrected": [dict(c, photo=p["index"]) for p in reports for c in p["markers"]["corrected"]],
+            "colour_in_scene": any(p["markers"]["colour_in_scene"] for p in reports),
+        }
+
     payload["photos"] = []
     for p in photos:
         used = [key for key, src in sources.items() if src["photo"] == p["index"]]
@@ -216,7 +228,10 @@ def analyse_views(images, modifiers=None, annotate=True, complexity=1):
                  "width": p["frame"].width, "height": p["frame"].height}
         if annotate:
             own = _only_from(merged, sources, p["index"])
-            entry["annotated_image"] = encode_jpeg(draw_overlay(p["image"].copy(), p["frame"], own, payload))
+            overlay = draw_overlay(p["image"].copy(), p["frame"], own, payload)
+            if p["markers"]:
+                draw_markers(overlay, p["markers"])
+            entry["annotated_image"] = encode_jpeg(overlay)
         payload["photos"].append(entry)
     if annotate:
         payload["annotated_image"] = next(e["annotated_image"] for e in payload["photos"]

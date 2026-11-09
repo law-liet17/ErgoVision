@@ -13,6 +13,7 @@ import cv2
 import numpy as np
 
 from . import insights as insights_mod
+from . import markers as markers_mod
 from . import methods, reba, rula
 from .angles import PostureAngles, SideAngles, compute_angles
 from .landmarks import LM, build_frame, classify_view, quality_warnings
@@ -135,11 +136,17 @@ def detect_frame(image, static=True, complexity=1, person=None):
     return frames[0]
 
 
-def analyse_image(image, modifiers=None, annotate=True, static=True, complexity=1, person=None):
-    """Run the whole assessment on one BGR image (on ``person`` if several are in it)."""
+def analyse_image(image, modifiers=None, annotate=True, static=True, complexity=1, person=None,
+                  markers=None):
+    """Run the whole assessment on one BGR image (on ``person`` if several are in it).
+
+    ``markers`` is a sticker colour: joints with a sticker next to them are moved
+    onto it before any angle is measured (see :mod:`.markers`).
+    """
     modifiers = modifiers or Modifiers()
     height, width = image.shape[:2]
     frame = detect_frame(image, static=static, complexity=complexity, person=person)
+    marker_report = markers_mod.apply_markers(image, frame, markers) if markers else None
 
     angles = compute_angles(frame)
     view = classify_view(frame)
@@ -151,10 +158,13 @@ def analyse_image(image, modifiers=None, annotate=True, static=True, complexity=
     payload["warnings"] = warnings
     payload["image"] = {"width": width, "height": height}
     payload["person"] = {"box": frame.box, "people_found": frame.people}
+    if marker_report:
+        payload["markers"] = marker_report
     if annotate:
-        payload["annotated_image"] = encode_jpeg(
-            draw_overlay(image.copy(), frame, angles, payload)
-        )
+        overlay = draw_overlay(image.copy(), frame, angles, payload)
+        if marker_report:
+            markers_mod.draw_markers(overlay, marker_report)
+        payload["annotated_image"] = encode_jpeg(overlay)
     return payload
 
 

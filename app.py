@@ -57,6 +57,7 @@ from ergonomics import (
 )
 from ergonomics import __version__ as engine_version
 from ergonomics import angles as angles_mod
+from ergonomics import markers as markers_mod
 from ergonomics import methods, reba, rula
 from ergonomics.tools import TOOLS, VISION_TOOLS, catalogue, run_tool
 from ergonomics.tools import niosh as niosh_tool
@@ -107,6 +108,16 @@ def _person_from_request():
     if len(box) != 4 or not all(0.0 <= v <= 1.0 for v in box) or box[0] >= box[2] or box[1] >= box[3]:
         raise ValueError("person must be a box [x0, y0, x1, y1] with values between 0 and 1")
     return box
+
+
+def _markers_from_request():
+    """Marker mode: the sticker colour sent with the upload, or None when it is off."""
+    colour = (request.form.get("markers") or "").strip().lower()
+    if not colour:
+        return None
+    if colour not in markers_mod.COLOURS:
+        raise ValueError("markers must be one of: %s" % ", ".join(markers_mod.COLOURS))
+    return colour
 
 
 def _choose_person(exc, **extra):
@@ -217,9 +228,10 @@ def analyze():
     try:
         modifiers = _modifiers_from_request()
         person = _person_from_request()
+        markers = _markers_from_request()
         image = decode_image(upload.read())
         result = analyse_image(image, modifiers=modifiers, annotate=_bool_arg("annotate", True),
-                               static=True, complexity=MODEL_COMPLEXITY, person=person)
+                               static=True, complexity=MODEL_COMPLEXITY, person=person, markers=markers)
     except MultiplePeople as exc:
         return _choose_person(exc)
     except NoPoseDetected as exc:
@@ -248,7 +260,7 @@ def analyze_multi():
             except ValueError as exc:
                 raise ValueError("Photo %d (%s): %s" % (number, upload.filename, exc)) from exc
         result = analyse_views(images, modifiers=modifiers, annotate=_bool_arg("annotate", True),
-                               complexity=MODEL_COMPLEXITY)
+                               complexity=MODEL_COMPLEXITY, markers=_markers_from_request())
     except NoPoseDetected as exc:
         return _error(str(exc), "no_pose", 422)
     except PoseBackendUnavailable as exc:
@@ -269,6 +281,7 @@ def analyze_video():
     try:
         modifiers = _modifiers_from_request()
         person = _person_from_request()
+        markers = _markers_from_request()
         every_ms = float(request.form.get("sample_ms", 500))
         max_frames = int(request.form.get("max_frames", 60))
     except ValueError as exc:
@@ -313,7 +326,7 @@ def analyze_video():
             sampled += 1
             try:
                 result = analyse_image(frame, modifiers=modifiers, annotate=False, static=False,
-                                       complexity=MODEL_COMPLEXITY, person=track)
+                                       complexity=MODEL_COMPLEXITY, person=track, markers=markers)
             except NoPoseDetected:
                 index += 1
                 continue
@@ -343,7 +356,7 @@ def analyze_video():
         return _error("No body detected in any sampled frame.", "no_pose", 422)
 
     out = analyse_image(worst[2], modifiers=modifiers, annotate=True, static=True,
-                        complexity=MODEL_COMPLEXITY, person=worst[3])
+                        complexity=MODEL_COMPLEXITY, person=worst[3], markers=markers)
     out["worst_frame_time_s"] = worst[1]
     out["timeline"] = frames
     out["frames_sampled"] = len(frames)
