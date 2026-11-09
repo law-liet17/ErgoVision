@@ -57,7 +57,7 @@ from ergonomics import (
 )
 from ergonomics import __version__ as engine_version
 from ergonomics import angles as angles_mod
-from ergonomics import reba, rula
+from ergonomics import methods, reba, rula
 from ergonomics.tools import TOOLS, VISION_TOOLS, catalogue, run_tool
 from ergonomics.tools import niosh as niosh_tool
 
@@ -136,15 +136,16 @@ VIDEO_UNREADABLE = ("Could not read that video. Try an MP4 recorded in H.264 "
                     "(on iPhone: Settings > Camera > Formats > Most Compatible).")
 
 
-def _overall_level(result):
-    """One 0-4 risk level for a posture: the worse of RULA and REBA.
+def _most_urgent(result):
+    """How urgent the more urgent of RULA's and REBA's own action levels is (0-4).
 
-    The same rule the console uses for its verdict - a risk is never averaged
-    away by the method that happens to score the posture more kindly. OWAS is
-    reported beside it but does not set the level: it is a transcribed sheet
-    and its leg code is unreliable when the feet are out of shot.
+    It orders the moments of a clip and times the exposure; it is not a score.
+    It follows the console's rule - the method that reads the posture more
+    kindly never hides the other. OWAS is reported beside it but does not lead:
+    it is a transcribed sheet and its leg code is unreliable when the feet are
+    out of shot.
     """
-    return max(int(result["rula"]["action_level"]), int(result["reba"]["risk_level"]))
+    return max(m["urgency"] for m in result["methods"] if m["id"] in ("rula", "reba"))
 
 
 # ---------------------------------------------------------------------------
@@ -320,7 +321,7 @@ def analyze_video():
                 capture.release()
                 return _choose_person(exc, time_s=round(index / fps, 2))
             track = result["person"]["box"]
-            level = _overall_level(result)
+            level = _most_urgent(result)
             entry = {"time_s": round(index / fps, 2), "rula": result["rula"]["grand_score"],
                      "reba": result["reba"]["reba_score"], "owas": result["owas"]["score"],
                      "level": level,
@@ -393,7 +394,9 @@ def api_niosh_composite():
     tasks = body.get("tasks") or []
     if not isinstance(tasks, list) or not tasks:
         return _error("Send {'tasks': [...], 'duration': '8h'}.")
-    return jsonify(niosh_tool.composite(tasks, body.get("duration", "8h")))
+    result = niosh_tool.composite(tasks, body.get("duration", "8h"))
+    result["method"] = methods.describe("niosh_cli", result)
+    return jsonify(result)
 
 
 @app.post("/api/tools/<tool_id>")

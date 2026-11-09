@@ -13,7 +13,7 @@ import cv2
 import numpy as np
 
 from . import insights as insights_mod
-from . import reba, rula
+from . import methods, reba, rula
 from .angles import PostureAngles, SideAngles, compute_angles
 from .landmarks import LM, build_frame, classify_view, quality_warnings
 from .pose_backend import PoseBackendUnavailable, backend_info, get_backend
@@ -170,13 +170,18 @@ def score_angles(angles, modifiers):
     angle_dict = angles.to_dict()
     arm = angle_dict.get(side) or {}
     owas_code = owas_tool.from_angles(angle_dict, angles.flags, modifiers.load_kg)
+    owas_result = owas_tool.run(owas_code)
     return {
         "angles": angle_dict,
         "flags": angles.flags,
         "confidence": angles.confidence,
         "rula": rula_result,
         "reba": reba_result,
-        "owas": owas_tool.run(owas_code),
+        "owas": owas_result,
+        # Each method with its own score and action level, most urgent first. OWAS
+        # follows: its leg code is unreliable with the feet out of shot, so it never leads.
+        "methods": methods.rank([methods.describe("rula", rula_result),
+                                 methods.describe("reba", reba_result)]) + [methods.describe("owas", owas_result)],
         "insights": findings,
         "summary": summary,
         # ready-to-send inputs for the other tools, so a photo can seed them

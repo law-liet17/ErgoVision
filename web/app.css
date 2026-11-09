@@ -224,6 +224,13 @@ textarea.inp { min-height: 70px; resize: vertical; }
 .photo-tabs button { font: inherit; font-size: 11px; color: var(--fg2); background: transparent; border: 1px solid var(--border); border-radius: 999px; min-width: 26px; padding: 3px 8px; cursor: pointer; }
 .photo-tabs button.on { color: var(--fg); background: var(--primary-dim); border-color: rgba(79,140,255,0.35); }
 .area-hidden { color: #ffb3b3; }
+.sum-method { font-size: 13px; font-weight: 700; color: var(--c); letter-spacing: .02em; margin-top: 2px; }
+.sum-area { font-size: 12px; color: var(--fg2); margin-top: 4px; }
+.sum-others { margin-top: 14px; display: grid; gap: 6px; }
+.sum-other { display: grid; grid-template-columns: auto 1fr; column-gap: 10px; align-items: baseline; padding: 8px 10px; border-left: 3px solid var(--c); background: var(--glass2); border-radius: 6px; font-size: 12.5px; }
+.sum-other small { grid-column: 2; color: var(--fg2); font-size: 11px; }
+.prio-note { font-size: 11px; color: var(--fg2); margin-top: 8px; line-height: 1.5; }
+.heat td.cell.prio { white-space: nowrap; font-size: 11px; padding-left: 8px; padding-right: 8px; }
 .modal-card:has(.chooser) { width: min(900px, 100%); }
 .chooser { position: relative; margin-top: 12px; line-height: 0; }
 .chooser img { width: 100%; border-radius: 8px; }

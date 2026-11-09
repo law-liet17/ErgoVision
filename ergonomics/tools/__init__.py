@@ -55,7 +55,10 @@ def catalogue():
 def run_tool(tool_id, inputs):
     if tool_id not in TOOLS:
         raise KeyError("unknown tool %r" % tool_id)
-    return TOOLS[tool_id].run(inputs or {})
+    from ..methods import describe  # methods imports this package
+    result = TOOLS[tool_id].run(inputs or {})
+    result["method"] = describe(tool_id, result)   # its own action level and body area
+    return result
 
 
 __all__ = ["TOOLS", "CATEGORIES", "VISION_TOOLS", "catalogue", "run_tool"]

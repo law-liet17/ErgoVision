@@ -15,6 +15,8 @@ import sqlite3
 import threading
 from datetime import datetime, timedelta
 
+from ergonomics.methods import PRIORITY_LABELS, PRIORITY_NOTE
+
 DB_PATH = os.environ.get("ERGOVISION_DB", os.path.join(os.path.dirname(os.path.abspath(__file__)), "ergovision.db"))
 _LOCK = threading.Lock()
 
@@ -105,13 +107,33 @@ def list_workstations():
         stats = con.execute("""
             SELECT workstation_id, COUNT(*) AS n, MAX(band_level) AS worst, MAX(created_at) AS last
             FROM assessments GROUP BY workstation_id""").fetchall()
+        # the (latest) assessment whose own action level is the most urgent, per workstation
+        leaders = con.execute("""
+            SELECT a.workstation_id, a.tool_name, a.score, a.score_label FROM assessments a
+            WHERE a.band_level = (SELECT MAX(b.band_level) FROM assessments b WHERE b.workstation_id = a.workstation_id)
+            ORDER BY a.created_at DESC""").fetchall()
     by_id = {r["workstation_id"]: dict(r) for r in stats}
+    led_by = {}
+    for r in leaders:
+        led_by.setdefault(r["workstation_id"], dict(r))
     for w in ws:
         s = by_id.get(w["id"], {})
         w["assessments"] = s.get("n", 0)
         w["worst_band"] = s.get("worst")
         w["last_assessed"] = s.get("last")
+        w["priority"] = _priority(s.get("worst"), led_by.get(w["id"]))
     return ws
+
+
+def _priority(level, leader):
+    """The dashboard's ordering label: from the most urgent own action level, never a score."""
+    if level is None:
+        return None
+    lead = None
+    if leader:
+        lead = "%s %s" % (leader["tool_name"], "" if leader["score"] is None else "%g" % leader["score"])
+    return {"level": int(level), "label": PRIORITY_LABELS[int(level)], "led_by": lead and lead.strip(),
+            "note": PRIORITY_NOTE}
 
 
 def create_workstation(data):
@@ -287,6 +309,7 @@ def dashboard():
         "heatmap": latest,
         "workstations": ws,
         "priority": priority,
+        "priority_note": PRIORITY_NOTE,
         "actions": actions,
         "trend": trend,
         "recent": list_assessments(limit=8),

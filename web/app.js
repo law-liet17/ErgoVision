@@ -183,31 +183,34 @@ async function viewDashboard() {
   const cell = {};
   for (const h of d.heatmap) cell[h.workstation_id + ':' + h.tool] = h;
   const rows = d.workstations.filter(w => w.assessments > 0);
-  const worstNow = d.priority[0];   // scores are never averaged: the worst band governs
+  const worstNow = d.priority[0];   // ordered by the most urgent own action level; nothing is added up
+  const prio = p => p ? bandPill(p.level, p.label) : '';
   view.innerHTML = `
     <div class="page-head"><div><div class="eyebrow">Overview</div><h1 class="page">Workplace <em>risk</em> at a glance</h1>
-      <p>Every assessment keeps its native score and maps onto one five-step action band, so lifting, posture, repetition and office results rank together in one register.</p></div>
+      <p>Every assessment keeps its own score and its own action level — methods are never added together. Workstations are ordered by the most urgent action level among their assessments.</p></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">${c.demo_records ? '<button class="btn ghost" id="clear-demo">Clear demo data</button>' : ''}<a class="btn primary" href="#/new">＋ New assessment</a></div></div>
     <div class="grid g4" style="margin-bottom:18px">
       <div class="card kpi" style="--c:#4f8cff"><div class="cap">Workstations assessed</div><div class="big">${rows.length}<span class="muted" style="font-size:14px"> / ${c.workstations}</span></div><div class="sub">${c.assessments} assessments on record</div></div>
       <div class="card kpi" style="--c:#ff6b6b"><div class="cap">High or very high</div><div class="big" style="color:${c.high_or_worse ? '#ff6b6b' : 'inherit'}">${c.high_or_worse}</div><div class="sub">assessments needing action soon</div></div>
       <div class="card kpi" style="--c:#ffc53d"><div class="cap">Open actions</div><div class="big">${c.actions_open}</div><div class="sub">${c.actions_overdue ? '<span style="color:#ff6b6b;font-weight:700">' + c.actions_overdue + ' overdue</span>' : 'none overdue'}</div></div>
-      <div class="card kpi" style="--c:${bandColour(worstNow ? worstNow.worst_band : 0)}"><div class="cap">Highest risk now</div><div class="big" style="font-size:22px;color:${bandColour(worstNow ? worstNow.worst_band : 0)}">${worstNow ? BANDS[worstNow.worst_band][0] : 'none'}</div><div class="sub">${worstNow ? esc(worstNow.name) : 'nothing assessed yet'}</div></div>
+      <div class="card kpi" style="--c:${bandColour(worstNow ? worstNow.worst_band : 0)}" title="${esc(d.priority_note)}"><div class="cap">Fix this first</div><div class="big" style="font-size:20px;color:${bandColour(worstNow ? worstNow.worst_band : 0)}">${worstNow ? esc(worstNow.name) : 'nothing yet'}</div><div class="sub">${worstNow ? esc(worstNow.priority.led_by || '') + ' · ' + esc(worstNow.priority.label) : 'nothing assessed yet'}</div></div>
     </div>
     <div class="grid g-main" style="margin-bottom:18px">
       <div class="card"><div class="card-h"><span class="card-t">Risk heat-map · latest result per workstation and tool</span><span class="band">click a cell to open the report</span></div>
-        <div class="heat"><table><thead><tr><th>Workstation</th>${toolCols.map(t => '<th class="col">' + esc((state.tools[t] || {}).short || t) + '</th>').join('')}<th class="col">Worst</th></tr></thead><tbody>
-        ${rows.map(w => '<tr><td class="ws">' + esc(w.name) + '<small>' + esc(w.department) + '</small></td>' + toolCols.map(t => { const h = cell[w.id + ':' + t]; return h ? `<td class="cell b${h.band_level}" data-id="${h.id}" title="${esc((state.tools[t] || {}).name || t)} · ${esc(h.score_label)} ${esc(h.score)}">${esc(h.score)}</td>` : '<td class="cell">·</td>'; }).join('') + '<td class="cell b' + w.worst_band + '">' + BANDS[w.worst_band][0] + '</td></tr>').join('')}
-        </tbody></table></div></div>
+        <div class="heat"><table><thead><tr><th>Workstation</th>${toolCols.map(t => '<th class="col">' + esc((state.tools[t] || {}).short || t) + '</th>').join('')}<th class="col" title="${esc(d.priority_note)}">Priority</th></tr></thead><tbody>
+        ${rows.map(w => '<tr><td class="ws">' + esc(w.name) + '<small>' + esc(w.department) + '</small></td>' + toolCols.map(t => { const h = cell[w.id + ':' + t]; return h ? `<td class="cell b${h.band_level}" data-id="${h.id}" title="${esc((state.tools[t] || {}).name || t)} · ${esc(h.score_label)} ${esc(h.score)}">${esc(h.score)}</td>` : '<td class="cell">·</td>'; }).join('') + '<td class="cell prio b' + w.worst_band + '" title="' + esc((w.priority.led_by || '') + ' — ' + d.priority_note) + '">' + esc(w.priority.label) + '</td></tr>').join('')}
+        </tbody></table></div>
+        <div class="prio-note">Each cell is that method's own score. ${esc(d.priority_note)}</div></div>
       <div style="display:grid;gap:18px">
         <div class="card"><div class="card-h"><span class="card-t">Action band distribution</span></div><div style="height:180px"><canvas id="ch-band"></canvas></div></div>
         <div class="card"><div class="card-h"><span class="card-t">Priority workstations</span><a class="band" href="#/register">open register →</a></div>
-          ${d.priority.map(w => `<div class="chip" style="margin-bottom:6px;cursor:pointer" data-ws="${w.id}"><span class="name">${esc(w.name)}<span class="sub"> · ${esc(w.department)}</span></span>${bandPill(w.worst_band)}</div>`).join('') || '<div class="muted">No prioritised stations yet.</div>'}</div>
+          ${d.priority.map(w => `<div class="chip" style="margin-bottom:6px;cursor:pointer" data-ws="${w.id}"><span class="name">${esc(w.name)}<span class="sub"> · ${esc(w.priority.led_by || w.department)}</span></span>${prio(w.priority)}</div>`).join('') || '<div class="muted">No prioritised stations yet.</div>'}
+          <div class="prio-note">${esc(d.priority_note)}</div></div>
       </div>
     </div>
     <div class="grid g2" style="margin-bottom:18px">
       <div class="card"><div class="card-h"><span class="card-t">Assessments by tool · mean band</span></div><div style="height:220px"><canvas id="ch-tool"></canvas></div></div>
-      <div class="card"><div class="card-h"><span class="card-t">Assessment activity</span><span class="band">per day · worst band</span></div><div style="height:220px"><canvas id="ch-trend"></canvas></div></div>
+      <div class="card"><div class="card-h"><span class="card-t">Assessment activity</span><span class="band">per day · most urgent action level</span></div><div style="height:220px"><canvas id="ch-trend"></canvas></div></div>
     </div>
     <div class="card"><div class="card-h"><span class="card-t">Recent assessments</span><a class="band" href="#/register">all →</a></div>
       <table class="tbl"><thead><tr><th>When</th><th>Workstation</th><th>Tool</th><th>Result</th><th>Band</th></tr></thead><tbody>
@@ -279,7 +282,7 @@ function breakdownHTML(rows) {
 function resultHTML(res, schema) {
   const max = { niosh: 3, strain_index: 13, rosa: 10, owas: 4, art: 30, rapp: 30, kim: 60, biomech: 6400, fit: 30 }[res.tool] || 10;
   return `<div class="card"><div class="score-hero">${ring(res.score === null ? 'n/a' : res.score, max, res.band.level, res.score_label || 'score')}
-      <div><div class="eyebrow">${esc(schema.short)} result</div><h3>${esc(res.summary)}</h3><div style="margin-top:8px">${bandPill(res.band.level, res.band.label + ' risk')}</div><div class="lead">${esc(res.band.action)}</div></div></div></div>
+      <div><div class="eyebrow">${esc(schema.short)} result</div><h3>${esc(res.summary)}</h3><div style="margin-top:8px">${ownPill(res)}</div><div class="lead">${esc(ownAction(res))}</div>${ownArea(res)}</div></div></div>
     <div class="card" style="margin-top:18px"><div class="card-h"><span class="card-t">Where the score came from</span><span class="band">${esc(schema.output)}</span></div>${breakdownHTML(res.breakdown)}</div>
     <div class="card" style="margin-top:18px"><div class="card-h"><span class="card-t">What to change, in priority order</span><span class="band">${res.insights.length} finding${res.insights.length === 1 ? '' : 's'} · hierarchy of controls</span></div>${insightsHTML(res.insights, schema.standard)}</div>`;
 }
@@ -391,7 +394,6 @@ const REBA_MAX = { neck: 3, trunk: 5, legs: 4, upper_arm: 6, lower_arm: 2, wrist
 const ratio = (s, max) => max <= 1 ? 0 : max === 2 ? (s >= 2 ? 0.5 : 0) : Math.max(0, Math.min(1, (s - 1) / (max - 1)));
 const compHeat = (rula, reba, k) => { const r = rula && rula.components[k], b = reba && reba.components[k]; return Math.max(r ? ratio(r.score, MAXIMA[k]) : 0, b ? ratio(b.score, REBA_MAX[k] || MAXIMA[k]) : 0); };
 const cssHeat = t => t > 0.65 ? '#ff6b6b' : t > 0.3 ? '#ffc53d' : '#4ade80';
-const levelColour = lvl => lvl >= 3 ? '#ff6b6b' : lvl >= 2 ? '#ffc53d' : '#4ade80';
 const COMPONENT_ROWS = [['upper_arm', 'Upper arm'], ['lower_arm', 'Lower arm'], ['wrist', 'Wrist'], ['wrist_twist', 'Wrist twist'], ['neck', 'Neck'], ['trunk', 'Trunk'], ['legs', 'Legs']];
 /* [label, value, reference line, key of the measurement in a multi-photo result's `sources`] */
 const ANGLE_ROWS = [
@@ -445,14 +447,19 @@ const atLeast = r => r.is_minimum ? '≥' : '';
 const srcText = (data, key) => { const s = key && data.sources && data.sources[key]; return s ? 'photo ' + s.photo + ', ' + s.view + ' view' : ''; };
 const hiddenJoint = (data, key) => (data.missing_joints || []).find(m => m.key === key);
 
-function verdictLine(rula, reba) {
-  const level = Math.max(rula.action_level, reba.risk_level);
-  const worst = rula.action_level >= reba.risk_level
-    ? 'RULA ' + atLeast(rula) + rula.grand_score + ' of 7' : 'REBA ' + atLeast(reba) + reba.reba_score + ' of 15';
-  const text = ['Posture is fine as it is.', 'Acceptable. Improve it if the change is cheap.',
-    'Change this workstation. Plan it.', 'Change this workstation soon.', 'Stop and redesign this task now.'][level];
-  return { level, text, worst };
+/* A tool result in its own terms: own action level, own wording, the body area it covers.
+   Records saved before methods described themselves fall back to the shared band. */
+const ownPill = r => r.method ? bandPill(r.method.urgency, r.method.label) : bandPill(r.band.level, r.band.label + ' risk');
+const ownAction = r => r.method ? r.method.action : r.band.action;
+const ownArea = r => r.method && r.method.area ? '<div class="muted" style="margin-top:6px">Covers: ' + esc(r.method.area.toLowerCase()) + '</div>' : '';
+
+/* Methods are never added up: the one whose own action level is most urgent leads
+   (data.methods comes ranked from the engine), with its own score and wording. */
+function verdictLine(data) {
+  const m = data.methods[0];
+  return { level: m.urgency, lead: m, text: m.name + ' ' + m.score_text + ' — ' + m.label.toLowerCase() + ': ' + m.action };
 }
+const methodScore = m => m.max ? esc(m.score_text.split('/')[0]) + '<small>/' + m.max + '</small>' : esc(m.score_text);
 
 async function viewLab() {
   setCrumbs(['Assess', 'Posture lab']);
@@ -659,16 +666,19 @@ function labRender(data) {
   /* title + verdict */
   const title = L.demo ? DEMOS[L.demoIndex].name : ($('#chip-name') || {}).textContent || 'Uploaded posture';
   $('#lab-title').innerHTML = esc(title) + (L.demo ? ' <span class="tag" id="demo-tag">demo pose</span>' : '');
-  const v = verdictLine(rula, reba);
+  const v = verdictLine(data);
   $('#verdict').innerHTML = '<span class="dot" style="background:' + bandColour(v.level) + '"></span>'
-    + '<b>' + esc(v.text) + '</b><span class="muted"> Worst score: ' + esc(v.worst) + ' · ' + esc(side) + ' arm governs.</span>';
+    + '<b>' + esc(v.text) + '</b><span class="muted"> Most urgent method · covers ' + esc(v.lead.area.toLowerCase()) + ' · ' + esc(side) + ' arm governs.</span>';
   $('#verdict').style.setProperty('--c', bandColour(v.level));
 
-  /* three scores */
-  const rc = $('#rula-card'), bc = $('#reba-card'), oc = $('#owas-card');
-  rc.style.setProperty('--c', levelColour(rula.action_level)); bc.style.setProperty('--c', levelColour(reba.risk_level)); oc.style.setProperty('--c', bandColour(owas.band.level));
-  $('#rula-n').textContent = atLeast(rula) + rula.grand_score; $('#reba-n').textContent = atLeast(reba) + reba.reba_score; $('#owas-n').textContent = owas.score;
-  $('#rula-act').textContent = rula.action; $('#reba-act').textContent = reba.action; $('#owas-act').textContent = owas.band.action;
+  /* one card per method, in order of how urgent its own action level is */
+  data.methods.forEach((m, i) => {
+    const card = $('#' + m.id + '-card'); if (!card) return;
+    card.style.order = i; card.style.setProperty('--c', bandColour(m.urgency));
+    card.querySelector('.cap').textContent = m.name + ' · ' + m.area.split(' (')[0].toLowerCase() + (i === 0 ? ' · most urgent' : '');
+    $('#' + m.id + '-n').textContent = m.score_text.split('/')[0];
+    $('#' + m.id + '-act').textContent = m.label + ': ' + m.action;
+  });
   const hidden = data.missing_joints || [];
   $('#warnings').innerHTML = hidden.map(m => '<div class="note err" style="margin-top:6px">⚠ ' + esc(m.message) + '</div>').join('')
     + (hidden.length ? '<div class="note info" style="margin-top:6px">Hidden joints are counted at their lowest band, so RULA and REBA are <b>minimum</b> scores (shown with ≥) until a photo shows them.</div>' : '')
@@ -765,17 +775,11 @@ function areaCards(data) {
   return { byArea, cards };
 }
 
-/* The answer a supervisor reads first: one level, one sentence, three fixes. */
-const LEVEL_WORD = ['Safe', 'Low risk', 'Medium risk', 'High risk', 'Very high risk'];
-const LEVEL_TODO = [
-  'This posture is fine. Nothing to change.',
-  'Acceptable. Improve it only if the change is cheap.',
-  'Plan a change to this workstation, then check it again.',
-  'Change this workstation soon — it is likely to cause injury.',
-  'Stop and redesign this task now.',
-];
+/* The answer a supervisor reads first: the most urgent method in its own terms, three fixes,
+   then every other method with its own score. Nothing is combined into one number. */
+const URGENCY_WORD = ['No action', 'Monitor', 'Plan a fix', 'Fix soon', 'Fix now'];
 function summaryRender(data, cards, v) {
-  const L = state.lab, level = v.level, owas = data.owas;
+  const L = state.lab, level = v.level, lead = v.lead, others = data.methods.slice(1);
   const main = level >= 2 ? cards.find(c => c.lvl >= 2 && !c.gone) : null;
   const reason = main
     ? '<b>Main reason:</b> ' + esc(main.area.label.toLowerCase()) + ' at ' + fmtDeg(Math.abs(main.deg)) + ' — the safe range is ' + esc(main.area.ideal) + '.'
@@ -790,29 +794,33 @@ function summaryRender(data, cards, v) {
   let clip = '';
   const x = data.exposure;
   if (x && data.timeline) {
-    const segs = x.pct_by_level.map((p, i) => p ? '<span style="flex:' + p + ';background:' + bandColour(i) + '" title="' + LEVEL_WORD[i] + ' ' + p + '%"></span>' : '').join('');
-    const legend = x.pct_by_level.map((p, i) => p ? '<span><i style="background:' + bandColour(i) + '"></i>' + LEVEL_WORD[i] + ' ' + p + '%</span>' : '').join('');
+    const segs = x.pct_by_level.map((p, i) => p ? '<span style="flex:' + p + ';background:' + bandColour(i) + '" title="' + URGENCY_WORD[i] + ' ' + p + '%"></span>' : '').join('');
+    const legend = x.pct_by_level.map((p, i) => p ? '<span><i style="background:' + bandColour(i) + '"></i>' + URGENCY_WORD[i] + ' ' + p + '%</span>' : '').join('');
     clip = '<div class="sum-clip"><div class="sum-clip-t">Across the clip · ' + data.frames_sampled + ' moments checked over ' + x.duration_s + ' s'
-      + ' · high risk or worse for <b>' + x.pct_high + '%</b> of the time · worst moment at ' + data.worst_frame_time_s + ' s</div>'
+      + ' · RULA or REBA calls for action soon or now during <b>' + x.pct_high + '%</b> of the time · worst moment at ' + data.worst_frame_time_s + ' s</div>'
       + '<div class="sum-bar">' + segs + '</div><div class="sum-legend">' + legend + '</div></div>';
   }
 
   $('#lab-summary').innerHTML = `
     <div class="summary" style="--c:${bandColour(level)}">
       <div class="sum-level">
-        <div class="sum-cap">Risk level</div>
-        <div class="sum-n">${level}<small>/4</small></div>
-        <div class="sum-word">${LEVEL_WORD[level]}</div>
+        <div class="sum-cap">Most urgent</div>
+        <div class="sum-method">${esc(lead.name)}</div>
+        <div class="sum-n">${methodScore(lead)}</div>
+        <div class="sum-word">${esc(lead.label)}</div>
       </div>
       <div class="sum-body">
-        <div class="sum-head">${esc(LEVEL_TODO[level])}</div>
+        <div class="sum-head">${esc(lead.action)}</div>
+        <div class="sum-area">${esc(lead.name)} covers the ${esc(lead.area.toLowerCase())}</div>
         <p class="sum-reason">${reason}</p>
         ${fixes.length && level >= 1 ? '<div class="sum-fix-t">' + (level >= 2 ? 'What to do' : 'Optional improvements') + '</div><ol class="sum-fixes">' + fixes.map(a => '<li>' + esc(a) + '</li>').join('') + '</ol>' : ''}
         ${clip}
+        <div class="sum-others"><div class="sum-fix-t">Other methods · own scores, less urgent or equal</div>
+          ${others.map(m => `<div class="sum-other" style="--c:${bandColour(m.urgency)}"><b>${esc(m.name)} ${esc(m.score_text)}</b><span>${esc(m.label)} — ${esc(m.action)}</span><small>${esc(m.area)}</small></div>`).join('')}</div>
         ${(data.missing_joints || []).length ? '<div class="sum-note sum-hidden">⚠ Not visible in any photo: ' + esc(data.missing_joints.map(j => j.joint.toLowerCase()).join(', ')) + '. These are counted at their lowest band, so the real risk may be higher — add a photo that shows them.</div>' : ''}
         ${hidden ? '<div class="sum-note">Posture only. The ' + (data.timeline ? 'video' : 'photo') + ' cannot show the weight carried or how often the move repeats — add them under <b>Task details the camera cannot see</b> for the full score.</div>' : ''}
-        <details class="sum-how"><summary>Scores: RULA ${atLeast(data.rula)}${data.rula.grand_score}/7 · REBA ${atLeast(data.reba)}${data.reba.reba_score}/15 · OWAS ${owas.score}/4 — how is this worked out?</summary>
-          <p>We find 33 points on the body and measure the angle of each joint. Two standard checklists score those angles: <b>RULA</b> (arms, neck and back) and <b>REBA</b> (whole body). Each is turned into the same 0–4 risk level, and <b>the higher one is your risk level</b> — a risk is never averaged away. <b>OWAS</b> (back, arms, legs and load) is shown as a second opinion.${data.timeline ? ' For a video we check one moment every ' + (x ? x.seconds_per_sample : 0.5) + ' s across the whole clip; the worst moment sets the level, and the bar shows how long the worker spent at each level.' : ''} Full arithmetic is under “Measured angles and the worksheet arithmetic” below.</p>
+        <details class="sum-how"><summary>Why ${esc(lead.name)} is shown first — how is this worked out?</summary>
+          <p>We find 33 points on the body and measure the angle of each joint. Standard checklists score those angles: <b>RULA</b> (neck, shoulders, arms and wrists) and <b>REBA</b> (whole body), with <b>OWAS</b> (back, arms and legs) as a second opinion. Each keeps <b>its own score and its own action level</b> — RULA runs to 7 and REBA to 15, so their numbers are never added, averaged or compared directly. Instead we compare how urgent each method's own action level is, and show the most urgent first. OWAS never leads, because its leg reading is unreliable when the feet are out of shot.${data.timeline ? ' For a video we check one moment every ' + (x ? x.seconds_per_sample : 0.5) + ' s across the whole clip; the most urgent moment is scored in full, and the bar shows how long RULA or REBA called for each kind of action.' : ''} Full arithmetic is under “Measured angles and the worksheet arithmetic” below.</p>
         </details>
       </div>
     </div>`;
@@ -824,9 +832,10 @@ function postureRecords(data) {
   const comps = res => Object.values(res.components).map(c => ({ label: c.name.replace(/_/g, ' '), value: c.band, points: c.score }));
   const rulaLevel = rula.action_level === 1 ? (rula.grand_score <= 1 ? 0 : 1) : rula.action_level;
   const inputs = { angles: state.lab.angles, flags: state.lab.flags, modifiers: state.lab.modifiers };
+  const method = id => (data.methods || []).find(m => m.id === id);
   return [
-    { tool: 'rula', tool_name: 'RULA', inputs, result: { tool: 'rula', score: rula.grand_score, score_label: 'RULA grand score', band: bandObj(rulaLevel), breakdown: comps(rula), insights: ins, summary: 'RULA ' + rula.grand_score + ' · action level ' + rula.action_level } },
-    { tool: 'reba', tool_name: 'REBA', inputs, result: { tool: 'reba', score: reba.reba_score, score_label: 'REBA score', band: bandObj(reba.risk_level), breakdown: comps(reba), insights: ins, summary: 'REBA ' + reba.reba_score + ' · ' + reba.risk + ' risk' } },
+    { tool: 'rula', tool_name: 'RULA', inputs, result: { tool: 'rula', score: rula.grand_score, score_label: 'RULA grand score', band: bandObj(rulaLevel), method: method('rula'), breakdown: comps(rula), insights: ins, summary: 'RULA ' + atLeast(rula) + rula.grand_score + ' · action level ' + rula.action_level } },
+    { tool: 'reba', tool_name: 'REBA', inputs, result: { tool: 'reba', score: reba.reba_score, score_label: 'REBA score', band: bandObj(reba.risk_level), method: method('reba'), breakdown: comps(reba), insights: ins, summary: 'REBA ' + atLeast(reba) + reba.reba_score + ' · ' + reba.risk + ' risk' } },
   ];
 }
 
@@ -876,7 +885,7 @@ async function viewAssessment(id) {
     <div class="grid g-tool">
       <div>
         <div class="card"><div class="score-hero">${ring(r.score ?? 'n/a', { niosh: 3, strain_index: 13, rosa: 10, owas: 4, art: 30, rapp: 30, kim: 60, biomech: 6400, fit: 30, rula: 7, reba: 15 }[a.tool] || 10, r.band.level, r.score_label || 'score')}
-          <div><h3>${esc(r.summary)}</h3><div style="margin-top:8px">${bandPill(r.band.level, r.band.label + ' risk')}</div><div class="lead">${esc(r.band.action)}</div><div class="muted" style="margin-top:8px">${esc(schema.standard)}</div></div></div></div>
+          <div><h3>${esc(r.summary)}</h3><div style="margin-top:8px">${ownPill(r)}</div><div class="lead">${esc(ownAction(r))}</div>${ownArea(r)}<div class="muted" style="margin-top:8px">${esc(schema.standard)}</div></div></div></div>
         <div class="card" style="margin-top:18px"><div class="card-h"><span class="card-t">Where the score came from</span><span class="band">${esc(schema.output)}</span></div>${breakdownHTML(r.breakdown || [])}</div>
         <div class="card no-print" style="margin-top:18px"><div class="card-h"><span class="card-t">Actions</span><button class="btn small" id="add-act">＋ Add action</button></div><div id="acts">${actionRows(a.actions)}</div></div>
       </div>
@@ -1168,7 +1177,7 @@ async function viewGuided(match) {
           const chip = host.querySelector('[data-chip="' + id + '"]');
           chip.className = 'pill b' + res.band.level; chip.textContent = res.score + ' · ' + res.band.label;
           host.querySelector('[data-result="' + id + '"]').innerHTML =
-            `<div class="mini-result"><div><b>${esc(res.summary)}</b><div class="muted">${esc(res.band.action)}</div></div></div>`
+            `<div class="mini-result"><div><b>${esc(res.summary)}</b><div class="muted">${esc(ownAction(res))}</div></div></div>`
             + (res.insights[0] && res.insights[0].severity !== 'info' ? `<div class="mini-fix"><span class="ctrl">${esc(CONTROL_LABEL[res.insights[0].control] || '')}</span>${esc(res.insights[0].actions[0])}</div>` : '');
           updateBar();
         } catch (e) { host.querySelector('[data-result="' + id + '"]').innerHTML = '<div class="note err">' + esc(e.message) + '</div>'; }
