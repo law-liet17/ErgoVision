@@ -158,6 +158,11 @@ def compute_angles(frame):
     # --- trunk: measured against gravity --------------------------------
     trunk_vec = frame.shoulder_mid - frame.hip_mid
     angles.trunk_flexion = signed_angle(trunk_vec, up, fwd_g)
+    # The facing direction comes from the nose, which flips once the head hangs
+    # below the hips (deep bends, all-fours).  Past 60 deg from vertical a
+    # backwards lean is not a realistic work posture, so treat it as flexion.
+    if angle_between(trunk_vec, up) > 60.0:
+        angles.trunk_flexion = abs(angles.trunk_flexion)
     angles.trunk_side_bend = (
         out_of_plane_angle(trunk_vec, lat_g) if frame.has_world else float("nan")
     )
